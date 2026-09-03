@@ -603,8 +603,14 @@ struct menu_dialog
    unsigned              confirm_msg;
    unsigned              confirm_cmd;
    unsigned              pending_cmd;
+   char                  confirm_msg_text[256];
    bool                  confirm_hover_ok;
    bool                  confirm_hover_back;
+   bool                  confirm_selection_ok;
+   bool                  confirm_three_choice;
+   unsigned              confirm_choice;
+   char                  confirm_choice_labels[3][32];
+   void                (*confirm_choice_cb)(unsigned choice);
    bool                  pending_push;
 };
 

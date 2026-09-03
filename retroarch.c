@@ -120,6 +120,8 @@
 
 #ifdef HAVE_MENU
 #include "menu/menu_driver.h"
+#include "romm/romm_library.h"
+#include "romm/romm_config.h"
 #endif
 
 #include "location_driver.h"
@@ -193,6 +195,9 @@
 #include "file_path_special.h"
 #include "ui/ui_companion_driver.h"
 #include "verbosity.h"
+#ifdef __3DS__
+#include "romm/romm_session.h"
+#endif
 
 #include "gfx/video_driver.h"
 #include "gfx/video_display_server.h"
@@ -3347,6 +3352,48 @@ bool command_event(enum event_command cmd, void *data)
 
    switch (cmd)
    {
+#ifdef HAVE_MENU
+      case CMD_EVENT_ROMMARCH_DISCARD_PENDING_EXIT:
+      {
+         size_t new_selection_ptr = menu_st->selection_ptr;
+         long platform_id = romm_library_get_platform_id();
+         romm_library_pending_clear(platform_id);
+         menu_entries_pop_stack(&new_selection_ptr, 0, 1);
+         menu_st->selection_ptr = new_selection_ptr;
+         menu_st->flags |= MENU_ST_FLAG_ENTRIES_NEED_REFRESH;
+         return true;
+      }
+      case CMD_EVENT_ROMMARCH_SAVE_INCOMPLETE_EXIT:
+      {
+         size_t new_selection_ptr = menu_st->selection_ptr;
+         long platform_id = romm_config_get_save_platform_id();
+         if (platform_id > 0)
+            romm_config_set_save_enabled(platform_id, false);
+         menu_entries_pop_stack(&new_selection_ptr, 0, 1);
+         menu_st->selection_ptr = new_selection_ptr;
+         menu_st->flags |= MENU_ST_FLAG_ENTRIES_NEED_REFRESH;
+         return true;
+      }
+      case CMD_EVENT_ROMMARCH_DELETE_ROM_CONFIRM:
+         menu_dialog_confirm_set_text(menu_st,
+               "Are you sure you want to delete this ROM from the device? This will not affect your RomM library.",
+               CMD_EVENT_ROMMARCH_DELETE_ROM_EXECUTE);
+         return true;
+      case CMD_EVENT_ROMMARCH_DELETE_ROM_EXECUTE:
+      {
+         bool deleted = romm_library_execute_delete();
+         const char *msg = deleted
+               ? "RomMArch: ROM deleted from device"
+               : "RomMArch: Unable to delete ROM";
+         runloop_msg_queue_push(msg, strlen(msg), 1, 240, true, NULL,
+               MESSAGE_QUEUE_ICON_DEFAULT, deleted
+               ? MESSAGE_QUEUE_CATEGORY_INFO : MESSAGE_QUEUE_CATEGORY_ERROR);
+         menu_st->flags |= MENU_ST_FLAG_ENTRIES_NEED_REFRESH;
+         if (!deleted)
+            romm_library_cancel_delete();
+         return true;
+      }
+#endif
       case CMD_EVENT_LOAD_FILES:
 #ifdef HAVE_CHEEVOS
          if (rcheevos_hardcore_active())
@@ -6657,6 +6704,22 @@ int rarch_main(int argc, char *argv[], void *data)
    }
 
    settings = config_get_ptr();
+
+#ifdef __3DS__
+   {
+      romm_session_t romm_session;
+
+      if (romm_session_load(&romm_session) && romm_session.pending)
+      {
+         const char *romm_msg = romm_session_save_exists(&romm_session)
+            ? "RomMArch: Previous save detected"
+            : "RomMArch: No save found for previous session";
+
+         runloop_msg_queue_push(romm_msg, strlen(romm_msg), 1, 180, true, NULL,
+               MESSAGE_QUEUE_ICON_DEFAULT, MESSAGE_QUEUE_CATEGORY_INFO);
+      }
+   }
+#endif
 
    ui_companion_driver_init_first(
 #ifdef HAVE_QT

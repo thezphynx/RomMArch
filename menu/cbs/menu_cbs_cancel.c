@@ -1,3 +1,4 @@
+#include "../../romm/romm_config.h"
 /*  RetroArch - A frontend for libretro.
  *  Copyright (C) 2011-2017 - Daniel De Matteis
  *
@@ -14,6 +15,7 @@
  */
 
 #include <file/file_path.h>
+#include <stdio.h>
 #include <string/stdstring.h>
 
 #include "../menu_driver.h"
@@ -25,6 +27,8 @@
 #include "../../cheat_manager.h"
 #endif
 #include "../../msg_hash_lbl_str.h"
+#include "../../romm/romm_library.h"
+#include "../../command.h"
 
 #ifndef BIND_ACTION_CANCEL
 #define BIND_ACTION_CANCEL(cbs, name) (cbs)->action_cancel = (name)
@@ -82,6 +86,48 @@ int action_cancel_pop_default(const char *path,
    menu_entries_pop_stack(&new_selection_ptr, 0, 1);
    menu_st->selection_ptr = new_selection_ptr;
    return 0;
+}
+
+
+static int action_cancel_romm_platform_roms(const char *path,
+      const char *label, unsigned type, size_t idx)
+{
+   struct menu_state *menu_st = menu_state_get_ptr();
+   long platform_id = romm_library_get_platform_id();
+   size_t pending = romm_library_pending_count(platform_id);
+
+   if (pending > 0)
+   {
+      char message[256];
+      snprintf(message, sizeof(message),
+            "%u ROM%s selected but not synchronized. Exit without downloading to device?",
+            (unsigned)pending, pending == 1 ? " is" : "s are");
+      menu_dialog_confirm_set_text(menu_st, message,
+            CMD_EVENT_ROMMARCH_DISCARD_PENDING_EXIT);
+      return 0;
+   }
+
+   return action_cancel_pop_default(path, label, type, idx);
+}
+
+
+static int action_cancel_romm_save_platform(const char *path,
+      const char *label, unsigned type, size_t idx)
+{
+   struct menu_state *menu_st = menu_state_get_ptr();
+   long platform_id = romm_config_get_save_platform_id();
+   char save_path[768];
+   bool enabled = romm_config_get_save_enabled(platform_id);
+   bool have_path = romm_config_get_save_path(platform_id, save_path, sizeof(save_path)) && *save_path;
+
+   if (enabled && !have_path)
+   {
+      menu_dialog_confirm_set_text(menu_st,
+            "Save synchronization is enabled, but no local save path is configured. Cancel setup?",
+            CMD_EVENT_ROMMARCH_SAVE_INCOMPLETE_EXIT);
+      return 0;
+   }
+   return action_cancel_pop_default(path, label, type, idx);
 }
 
 static int action_cancel_contentless_core(const char *path,
@@ -192,6 +238,21 @@ static int menu_cbs_init_bind_cancel_compare_label(menu_file_list_cbs_t *cbs,
 static int menu_cbs_init_bind_cancel_compare_type(menu_file_list_cbs_t *cbs,
       const char *label, const char *menu_label, unsigned type)
 {
+   if (menu_label && (
+            string_is_equal(menu_label, msg_hash_to_str(MENU_ENUM_LABEL_ROMM_PLATFORM_ROMS)) ||
+            string_is_equal(menu_label, msg_hash_to_str(MENU_ENUM_LABEL_DEFERRED_ROMM_PLATFORM_ROMS))))
+   {
+      BIND_ACTION_CANCEL(cbs, action_cancel_romm_platform_roms);
+      return 0;
+   }
+   if (menu_label && (
+            string_is_equal(menu_label, msg_hash_to_str(MENU_ENUM_LABEL_ROMM_SAVE_PLATFORM)) ||
+            string_is_equal(menu_label, msg_hash_to_str(MENU_ENUM_LABEL_DEFERRED_ROMM_SAVE_PLATFORM))))
+   {
+      BIND_ACTION_CANCEL(cbs, action_cancel_romm_save_platform);
+      return 0;
+   }
+
    switch (type)
    {
       case FILE_TYPE_DOWNLOAD_CORE_CONTENT:

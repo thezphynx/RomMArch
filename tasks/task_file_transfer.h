@@ -120,6 +120,10 @@ void *task_push_http_download_file(const char *url, const char *path,
       bool mute, const char *title,
       retro_task_callback_t cb, void *user_data);
 
+void *task_push_http_download_file_with_headers(const char *url,
+      const char *path, bool mute, const char *title, const char *headers,
+      retro_task_callback_t cb, void *user_data);
+
 void* task_push_http_transfer_file(const char* url, bool mute, const char* type,
       retro_task_callback_t cb, file_transfer_t* transfer_data);
 

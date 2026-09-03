@@ -35,6 +35,10 @@ OBJ += ctr/ctr_system.o
 OBJ += ctr/ctr_memory.o
 OBJ += ctr/ctr_linear.o
 OBJ += ctr/gpu_old.o
+OBJ += romm/romm_session.o
+OBJ += romm/romm_sync_list.o
+OBJ += romm/romm_config.o
+OBJ += romm/romm_library.o
 OBJ += ctr/exec-3dsx/exec_cia.o \
 	ctr/exec-3dsx/exec_3dsx.o \
 	ctr/exec-3dsx/mini-hb-menu/launch.o \

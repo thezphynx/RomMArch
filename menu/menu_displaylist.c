@@ -114,6 +114,9 @@
 #include "../paths.h"
 #include "../retroarch.h"
 #include "../runloop.h"
+#include "../romm/romm_sync_list.h"
+#include "../romm/romm_config.h"
+#include "../romm/romm_library.h"
 #include "../core.h"
 #include "../frontend/frontend_driver.h"
 #include <file/file_watch.h>
@@ -7938,6 +7941,302 @@ unsigned menu_displaylist_build_list(
                count++;
          }
          break;
+      case DISPLAYLIST_ROMM_SYNC_LIST:
+         {
+            if (menu_entries_append(list, "RomM Configuration", "rommarch_config",
+                  MENU_ENUM_LABEL_ROMMARCH_CONFIG, MENU_SETTING_ACTION, 0, 0, NULL))
+               count++;
+            if (menu_entries_append(list, "Rom Synchronization", "romm_library",
+                  MENU_ENUM_LABEL_ROMM_LIBRARY, MENU_SETTING_ACTION, 0, 0, NULL))
+               count++;
+            if (menu_entries_append(list, "Save Synchronization", "romm_save_sync",
+                  MENU_ENUM_LABEL_ROMM_SAVE_SYNC, MENU_SETTING_ACTION, 0, 0, NULL))
+               count++;
+         }
+         break;
+      case DISPLAYLIST_ROMMARCH_CONFIG:
+         {
+            char value[768];
+            char row[820];
+            romm_config_get_server_url(value, sizeof(value));
+            snprintf(row, sizeof(row), "RomM Server Address: %s", *value ? value : "Not configured");
+            if (menu_entries_append(list, row, "rommarch_server_edit",
+                  MENU_ENUM_LABEL_ROMMARCH_SERVER_EDIT, MENU_SETTING_ACTION, 0, 0, NULL)) count++;
+            romm_config_get_api_token(value, sizeof(value));
+            snprintf(row, sizeof(row), "RomM API Token: %s", *value ? value : "Not configured");
+            if (menu_entries_append(list, row, "rommarch_api_token_edit",
+                  MENU_ENUM_LABEL_ROMMARCH_API_TOKEN_EDIT, MENU_SETTING_ACTION, 0, 0, NULL)) count++;
+            if (menu_entries_append(list, "Test Connection", "rommarch_test_connection",
+                  MENU_ENUM_LABEL_ROMMARCH_TEST_CONNECTION, MENU_SETTING_ACTION, 0, 0, NULL)) count++;
+         }
+         break;
+      case DISPLAYLIST_ROMM_LIBRARY:
+         {
+            char roms_path[768], server[768], token[768], row[820];
+            bool have_path = romm_config_get_roms_path(roms_path, sizeof(roms_path)) && *roms_path;
+            bool have_server = romm_config_get_server_url(server, sizeof(server)) && *server;
+            bool have_token = romm_config_get_api_token(token, sizeof(token)) && *token;
+
+            snprintf(row, sizeof(row), "Configure Local ROM Directory: %s", have_path ? roms_path : "Not configured");
+            if (menu_entries_append(list, row, "rommarch_roms_path_edit",
+                  MENU_ENUM_LABEL_ROMMARCH_ROMS_PATH_EDIT, MENU_SETTING_ACTION, 0, 0, NULL)) count++;
+
+            if (!have_server || !have_token || !have_path)
+            {
+               const char *missing = !have_server ? "Configure RomM Server Address first" :
+                     (!have_token ? "Configure RomM API Token first" : "Configure Local ROM Directory first");
+               if (menu_entries_append(list, missing, "", MENU_ENUM_LABEL_VALUE_UNKNOWN,
+                     MENU_SETTING_NO_ITEM, 0, 0, NULL)) count++;
+            }
+            else
+            {
+               romm_platform_entry_t platforms[ROMM_LIBRARY_MAX_PLATFORMS];
+               size_t num_platforms = romm_library_get_platforms(platforms, ROMM_LIBRARY_MAX_PLATFORMS);
+               const char *error = romm_library_get_error();
+               if (romm_library_is_loading())
+               {
+                  if (menu_entries_append(list, "Loading RomM platforms...", "", MENU_ENUM_LABEL_VALUE_UNKNOWN,
+                        MENU_SETTING_NO_ITEM, 0, 0, NULL)) count++;
+               }
+               else if (error && *error)
+               {
+                  if (menu_entries_append(list, error, "", MENU_ENUM_LABEL_VALUE_UNKNOWN,
+                        MENU_SETTING_NO_ITEM, 0, 0, NULL)) count++;
+               }
+               else if (!num_platforms)
+               {
+                  if (menu_entries_append(list, "No RomM platforms returned", "", MENU_ENUM_LABEL_VALUE_UNKNOWN,
+                        MENU_SETTING_NO_ITEM, 0, 0, NULL)) count++;
+               }
+               else
+               {
+                  for (i = 0; i < num_platforms; i++)
+                  {
+                     char platform_id[32];
+                     snprintf(platform_id, sizeof(platform_id), "%ld", platforms[i].platform_id);
+                     if (menu_entries_append(list, platforms[i].name, platform_id,
+                           MENU_ENUM_LABEL_VALUE_UNKNOWN, MENU_SETTING_ACTION_ROMM_PLATFORM, 0, 0, NULL)) count++;
+                  }
+               }
+            }
+         }
+         break;
+      case DISPLAYLIST_ROMM_SAVE_SYNC:
+         {
+            romm_platform_entry_t platforms[ROMM_LIBRARY_MAX_PLATFORMS];
+            size_t num_platforms = romm_library_get_platforms(platforms, ROMM_LIBRARY_MAX_PLATFORMS);
+            const char *error = romm_library_get_error();
+            char server[768], token[768];
+            bool have_server = romm_config_get_server_url(server, sizeof(server)) && *server;
+            bool have_token = romm_config_get_api_token(token, sizeof(token)) && *token;
+            bool any_ready = false;
+
+            romm_config_cleanup_legacy_save_path();
+
+            for (i = 0; i < num_platforms; i++)
+               if (romm_config_save_ready(platforms[i].platform_id))
+               {
+                  any_ready = true;
+                  break;
+               }
+
+            if (!have_server || !have_token)
+            {
+               const char *missing = !have_server ? "Configure RomM Server Address first" : "Configure RomM API Token first";
+               if (menu_entries_append(list, missing, "", MENU_ENUM_LABEL_VALUE_UNKNOWN,
+                     MENU_SETTING_NO_ITEM, 0, 0, NULL)) count++;
+            }
+            else if (romm_library_is_loading())
+            {
+               if (menu_entries_append(list, "Loading RomM platforms...", "", MENU_ENUM_LABEL_VALUE_UNKNOWN,
+                     MENU_SETTING_NO_ITEM, 0, 0, NULL)) count++;
+            }
+            else if (error && *error)
+            {
+               if (menu_entries_append(list, error, "", MENU_ENUM_LABEL_VALUE_UNKNOWN,
+                     MENU_SETTING_NO_ITEM, 0, 0, NULL)) count++;
+            }
+            else
+            {
+               if (menu_entries_append(list, "Configure Core Save Directories", "romm_save_directories",
+                     MENU_ENUM_LABEL_ROMM_SAVE_DIRECTORIES, MENU_SETTING_ACTION, 0, 0, NULL)) count++;
+
+               if (menu_entries_append(list,
+                     any_ready ? "Initiate Sync" : "Initiate Sync (Unavailable)",
+                     "rommarch_save_synchronize", MENU_ENUM_LABEL_VALUE_UNKNOWN,
+                     any_ready ? MENU_SETTING_ACTION_ROMM_SAVE_SYNCHRONIZE : MENU_SETTING_NO_ITEM,
+                     0, 0, NULL)) count++;
+            }
+         }
+         break;
+      case DISPLAYLIST_ROMM_SAVE_DIRECTORIES:
+         {
+            romm_platform_entry_t platforms[ROMM_LIBRARY_MAX_PLATFORMS];
+            size_t num_platforms = romm_library_get_platforms(platforms, ROMM_LIBRARY_MAX_PLATFORMS);
+            const char *error = romm_library_get_error();
+
+            if (romm_library_is_loading())
+            {
+               if (menu_entries_append(list, "Loading RomM platforms...", "", MENU_ENUM_LABEL_VALUE_UNKNOWN,
+                     MENU_SETTING_NO_ITEM, 0, 0, NULL)) count++;
+            }
+            else if (error && *error)
+            {
+               if (menu_entries_append(list, error, "", MENU_ENUM_LABEL_VALUE_UNKNOWN,
+                     MENU_SETTING_NO_ITEM, 0, 0, NULL)) count++;
+            }
+            else if (!num_platforms)
+            {
+               if (menu_entries_append(list, "No RomM platforms returned", "", MENU_ENUM_LABEL_VALUE_UNKNOWN,
+                     MENU_SETTING_NO_ITEM, 0, 0, NULL)) count++;
+            }
+            else
+            {
+               for (i = 0; i < num_platforms; i++)
+               {
+                  char platform_id[32];
+                  char status[ROMM_LIBRARY_PLATFORM_LENGTH + 16];
+                  snprintf(platform_id, sizeof(platform_id), "%ld", platforms[i].platform_id);
+                  snprintf(status, sizeof(status), "%s [%s]", platforms[i].name,
+                        romm_config_save_ready(platforms[i].platform_id) ? "ON" : "OFF");
+                  if (menu_entries_append(list, status, platform_id, MENU_ENUM_LABEL_VALUE_UNKNOWN,
+                        MENU_SETTING_ACTION_ROMM_SAVE_PLATFORM, 0, 0, NULL)) count++;
+               }
+            }
+         }
+         break;
+      case DISPLAYLIST_ROMM_SAVE_PLATFORM:
+         {
+            long platform_id = romm_config_get_save_platform_id();
+            bool enabled = romm_config_get_save_enabled(platform_id);
+            char save_path[768];
+            bool have_path = romm_config_get_save_path(platform_id, save_path, sizeof(save_path)) && *save_path;
+            char row[900];
+
+            snprintf(row, sizeof(row), "[%c] Enable Save Sync", enabled ? 'X' : ' ');
+            if (menu_entries_append(list, row, "rommarch_save_enable", MENU_ENUM_LABEL_VALUE_UNKNOWN,
+                  MENU_SETTING_ACTION_ROMM_SAVE_ENABLE, 0, 0, NULL)) count++;
+
+            if (enabled)
+               snprintf(row, sizeof(row), "[%c] Local Save Path: %s", have_path ? 'X' : ' ',
+                     have_path ? save_path : "Not configured");
+            else
+               strlcpy(row, "[ ] Local Save Path: Enable Save Sync first", sizeof(row));
+
+            if (menu_entries_append(list, row, "rommarch_save_path", MENU_ENUM_LABEL_VALUE_UNKNOWN,
+                  enabled ? MENU_SETTING_ACTION_ROMM_SAVE_PATH : MENU_SETTING_NO_ITEM, 0, 0, NULL)) count++;
+         }
+         break;
+      case DISPLAYLIST_ROMM_PLATFORM_ROMS:
+         {
+            romm_library_entry_t entries[ROMM_LIBRARY_PAGE_SIZE];
+            size_t num_entries = romm_library_get_entries(entries, ROMM_LIBRARY_PAGE_SIZE);
+            const char *error = romm_library_get_error();
+
+            if (romm_library_is_loading())
+            {
+               if (menu_entries_append(list, "Loading ROMs...", "",
+                     MENU_ENUM_LABEL_VALUE_UNKNOWN, MENU_SETTING_ACTION, 0, 0, NULL))
+                  count++;
+            }
+            else if (error && *error)
+            {
+               if (menu_entries_append(list, error, "",
+                     MENU_ENUM_LABEL_VALUE_UNKNOWN, MENU_SETTING_ACTION, 0, 0, NULL))
+                  count++;
+            }
+            else
+            {
+               if (!num_entries)
+               {
+                  if (menu_entries_append(list, "No ROMs returned", "",
+                        MENU_ENUM_LABEL_VALUE_UNKNOWN, MENU_SETTING_ACTION, 0, 0, NULL))
+                     count++;
+               }
+               else
+               {
+                  for (i = 0; i < num_entries; i++)
+                  {
+                     char rom_id[32];
+                     char label[ROMM_LIBRARY_NAME_LENGTH + 64];
+                     char size_text[32];
+                     double size_value;
+
+                     size_text[0] = '\0';
+                     if (entries[i].size_bytes >= 1073741824ULL)
+                     {
+                        size_value = (double)entries[i].size_bytes / 1073741824.0;
+                        snprintf(size_text, sizeof(size_text), " - %.2f GB", size_value);
+                     }
+                     else if (entries[i].size_bytes >= 1048576ULL)
+                     {
+                        size_value = (double)entries[i].size_bytes / 1048576.0;
+                        snprintf(size_text, sizeof(size_text), " - %.1f MB", size_value);
+                     }
+                     else if (entries[i].size_bytes >= 1024ULL)
+                     {
+                        size_value = (double)entries[i].size_bytes / 1024.0;
+                        snprintf(size_text, sizeof(size_text), " - %.1f KB", size_value);
+                     }
+                     else if (entries[i].size_bytes)
+                        snprintf(size_text, sizeof(size_text), " - %llu B", entries[i].size_bytes);
+
+                     snprintf(label, sizeof(label), "[%c] %s%s",
+                           entries[i].selected ? 'X' : ' ', entries[i].name, size_text);
+                     snprintf(rom_id, sizeof(rom_id), "%ld", entries[i].rom_id);
+                     if (menu_entries_append(list, label, rom_id,
+                           MENU_ENUM_LABEL_VALUE_UNKNOWN, MENU_SETTING_ACTION_ROMM_ROM_TOGGLE,
+                           0, 0, NULL))
+                        count++;
+                  }
+               }
+
+               if (romm_library_has_previous())
+               {
+                  if (menu_entries_append(list, "< Previous Page", "prev",
+                        MENU_ENUM_LABEL_VALUE_UNKNOWN, MENU_SETTING_ACTION_ROMM_PAGE_PREV,
+                        0, 0, NULL))
+                     count++;
+               }
+
+               {
+                  char page_label[64];
+                  unsigned page = romm_library_get_page();
+                  unsigned long total = romm_library_get_total();
+                  if (total)
+                  {
+                     unsigned long pages = (total + ROMM_LIBRARY_PAGE_SIZE - 1) /
+                           ROMM_LIBRARY_PAGE_SIZE;
+                     snprintf(page_label, sizeof(page_label), "Page %u of %lu", page + 1, pages);
+                  }
+                  else
+                     snprintf(page_label, sizeof(page_label), "Page %u", page + 1);
+                  if (menu_entries_append(list, page_label, "",
+                        MENU_ENUM_LABEL_VALUE_UNKNOWN, MENU_SETTING_ACTION, 0, 0, NULL))
+                     count++;
+               }
+
+               if (romm_library_has_next())
+               {
+                  if (menu_entries_append(list, "Next Page >", "next",
+                        MENU_ENUM_LABEL_VALUE_UNKNOWN, MENU_SETTING_ACTION_ROMM_PAGE_NEXT,
+                        0, 0, NULL))
+                     count++;
+               }
+
+               {
+                  char sync_label[64];
+                  size_t pending_count = romm_library_pending_count(romm_library_get_platform_id());
+                  snprintf(sync_label, sizeof(sync_label), "Synchronize (%u selected)",
+                        (unsigned)pending_count);
+                  if (menu_entries_append(list, sync_label, "sync",
+                        MENU_ENUM_LABEL_VALUE_UNKNOWN, MENU_SETTING_ACTION_ROMM_SYNCHRONIZE,
+                        0, 0, NULL))
+                     count++;
+               }
+            }
+         }
+         break;
       case DISPLAYLIST_SUBSYSTEM_SETTINGS_LIST:
          {
             runloop_state_t *runloop_st                  = runloop_state_get_ptr();
@@ -15487,6 +15786,13 @@ static bool menu_displaylist_ctl_internal(
          case DISPLAYLIST_INPUT_SENSOR_SETTINGS_LIST:
          case DISPLAYLIST_PLAYLIST_SETTINGS_LIST:
          case DISPLAYLIST_SUBSYSTEM_SETTINGS_LIST:
+         case DISPLAYLIST_ROMM_SYNC_LIST:
+         case DISPLAYLIST_ROMMARCH_CONFIG:
+         case DISPLAYLIST_ROMM_LIBRARY:
+         case DISPLAYLIST_ROMM_PLATFORM_ROMS:
+         case DISPLAYLIST_ROMM_SAVE_SYNC:
+         case DISPLAYLIST_ROMM_SAVE_DIRECTORIES:
+         case DISPLAYLIST_ROMM_SAVE_PLATFORM:
 #ifdef HAVE_MIST
          case DISPLAYLIST_STEAM_SETTINGS_LIST:
 #endif
@@ -15931,6 +16237,11 @@ static bool menu_displaylist_ctl_internal(
                               PARSE_ACTION, false) == 0)
                         count++;
                   }
+
+                  if (MENU_DISPLAYLIST_PARSE_SETTINGS_ENUM(info->list,
+                           MENU_ENUM_LABEL_ROMM_SYNC_LIST,
+                           PARSE_ACTION, false) == 0)
+                     count++;
                }
 
                /* Show History and Favorites in menus without sidebar/tabs */

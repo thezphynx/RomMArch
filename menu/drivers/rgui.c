@@ -5080,8 +5080,12 @@ static void rgui_render_messagebox(
 
       if (confirm_dialog)
       {
-         const char *str_back                   = msg_hash_to_str(MENU_ENUM_LABEL_VALUE_BASIC_MENU_CONTROLS_BACK);
-         const char *str_ok                     = msg_hash_to_str(MENU_ENUM_LABEL_VALUE_BASIC_MENU_CONTROLS_OK);
+         const char *str_back = menu_st->dialog_st.confirm_three_choice
+               ? menu_st->dialog_st.confirm_choice_labels[0]
+               : msg_hash_to_str(MENU_ENUM_LABEL_VALUE_NO);
+         const char *str_ok = menu_st->dialog_st.confirm_three_choice
+               ? menu_st->dialog_st.confirm_choice_labels[2]
+               : msg_hash_to_str(MENU_ENUM_LABEL_VALUE_YES);
          size_t str_back_width                  = strlen(str_back) * rgui->font_width_stride;
          size_t str_ok_width                    = strlen(str_ok) * rgui->font_width_stride;
          float icon_size                        = rgui->font_width_stride;
@@ -5113,7 +5117,11 @@ static void rgui_render_messagebox(
             menu_st->dialog_st.confirm_hover_back = false;
 
          rgui_blit_line(rgui, fb_width, icon_x, icon_y, str_back,
-               (menu_st->dialog_st.confirm_hover_back)
+               (menu_st->dialog_st.confirm_hover_back ||
+                (!menu_st->dialog_st.confirm_hover_ok &&
+                 (menu_st->dialog_st.confirm_three_choice
+                    ? menu_st->dialog_st.confirm_choice == 0
+                    : !menu_st->dialog_st.confirm_selection_ok)))
                      ? rgui->colors.hover_color
                      : rgui->colors.normal_color,
                rgui->colors.shadow_color);
@@ -5143,10 +5151,25 @@ static void rgui_render_messagebox(
             menu_st->dialog_st.confirm_hover_ok = false;
 
          rgui_blit_line(rgui, fb_width, icon_x, icon_y, str_ok,
-               (menu_st->dialog_st.confirm_hover_ok)
+               (menu_st->dialog_st.confirm_hover_ok ||
+                (!menu_st->dialog_st.confirm_hover_back &&
+                 (menu_st->dialog_st.confirm_three_choice
+                    ? menu_st->dialog_st.confirm_choice == 2
+                    : menu_st->dialog_st.confirm_selection_ok)))
                      ? rgui->colors.hover_color
                      : rgui->colors.normal_color,
                rgui->colors.shadow_color);
+
+         if (menu_st->dialog_st.confirm_three_choice)
+         {
+            const char *str_mid = menu_st->dialog_st.confirm_choice_labels[1];
+            size_t str_mid_width = strlen(str_mid) * rgui->font_width_stride;
+            float mid_x = x + ((float)width - str_mid_width) / 2.0f;
+            rgui_blit_line(rgui, fb_width, mid_x, icon_y, str_mid,
+                  menu_st->dialog_st.confirm_choice == 1
+                     ? rgui->colors.hover_color : rgui->colors.normal_color,
+                  rgui->colors.shadow_color);
+         }
       }
    }
 }

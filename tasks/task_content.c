@@ -106,6 +106,7 @@
 #include "../playlist.h"
 #include "../paths.h"
 #include "../retroarch.h"
+#include "../romm/romm_session.h"
 #include "../runloop.h"
 #include "../verbosity.h"
 
@@ -2468,6 +2469,7 @@ bool task_push_load_content_from_playlist_from_menu(
    /* Specified core is not loaded
     * > Load it
     * > Forget manually loaded core */
+   romm_session_record_launch(core_path, fullpath);
    path_set(RARCH_PATH_CORE, core_path);
    path_clear(RARCH_PATH_CORE_LAST);
 

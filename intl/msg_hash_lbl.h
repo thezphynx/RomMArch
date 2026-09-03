@@ -973,6 +973,74 @@ MSG_HASH(
    MENU_ENUM_LABEL_DEFERRED_SUBSYSTEM_SETTINGS_LIST_STR
    )
 MSG_HASH(
+   MENU_ENUM_LABEL_DEFERRED_ROMM_SYNC_LIST,
+   "deferred_romm_sync_list"
+   )
+MSG_HASH(
+   MENU_ENUM_LABEL_ROMMARCH_CONFIG,
+   "rommarch_config"
+   )
+MSG_HASH(
+   MENU_ENUM_LABEL_ROMM_SAVE_SYNC,
+   "romm_save_sync"
+   )
+MSG_HASH(
+   MENU_ENUM_LABEL_ROMM_SAVE_DIRECTORIES,
+   "romm_save_directories"
+   )
+MSG_HASH(
+   MENU_ENUM_LABEL_ROMM_SAVE_PLATFORM,
+   "romm_save_platform"
+   )
+MSG_HASH(
+   MENU_ENUM_LABEL_ROMM_LIBRARY,
+   "romm_library"
+   )
+MSG_HASH(
+   MENU_ENUM_LABEL_ROMM_PLATFORM_ROMS,
+   "romm_platform_roms"
+   )
+MSG_HASH(
+   MENU_ENUM_LABEL_DEFERRED_ROMMARCH_CONFIG,
+   "deferred_rommarch_config"
+   )
+MSG_HASH(
+   MENU_ENUM_LABEL_DEFERRED_ROMM_SAVE_SYNC,
+   "deferred_romm_save_sync"
+   )
+MSG_HASH(
+   MENU_ENUM_LABEL_DEFERRED_ROMM_SAVE_DIRECTORIES,
+   "deferred_romm_save_directories"
+   )
+MSG_HASH(
+   MENU_ENUM_LABEL_DEFERRED_ROMM_SAVE_PLATFORM,
+   "deferred_romm_save_platform"
+   )
+MSG_HASH(
+   MENU_ENUM_LABEL_DEFERRED_ROMM_LIBRARY,
+   "deferred_romm_library"
+   )
+MSG_HASH(
+   MENU_ENUM_LABEL_DEFERRED_ROMM_PLATFORM_ROMS,
+   "deferred_romm_platform_roms"
+   )
+MSG_HASH(
+   MENU_ENUM_LABEL_ROMMARCH_SERVER_EDIT,
+   "rommarch_server_edit"
+   )
+MSG_HASH(
+   MENU_ENUM_LABEL_ROMMARCH_API_TOKEN_EDIT,
+   "rommarch_api_token_edit"
+   )
+MSG_HASH(
+   MENU_ENUM_LABEL_ROMMARCH_ROMS_PATH_EDIT,
+   "rommarch_roms_path_edit"
+   )
+MSG_HASH(
+   MENU_ENUM_LABEL_ROMMARCH_TEST_CONNECTION,
+   "rommarch_test_connection"
+   )
+MSG_HASH(
    MENU_ENUM_LABEL_DEFERRED_NETWORK_HOSTING_SETTINGS_LIST,
    MENU_ENUM_LABEL_DEFERRED_NETWORK_HOSTING_SETTINGS_LIST_STR
    )

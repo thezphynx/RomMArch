@@ -149,6 +149,16 @@ enum menu_settings_type
    MENU_SETTING_NO_ITEM,
    MENU_SETTING_DRIVER,
    MENU_SETTING_ACTION,
+   MENU_SETTING_ACTION_ROMM_SYNC_TOGGLE,
+   MENU_SETTING_ACTION_ROMM_PLATFORM,
+   MENU_SETTING_ACTION_ROMM_ROM_TOGGLE,
+   MENU_SETTING_ACTION_ROMM_PAGE_PREV,
+   MENU_SETTING_ACTION_ROMM_PAGE_NEXT,
+   MENU_SETTING_ACTION_ROMM_SYNCHRONIZE,
+   MENU_SETTING_ACTION_ROMM_SAVE_PLATFORM,
+   MENU_SETTING_ACTION_ROMM_SAVE_ENABLE,
+   MENU_SETTING_ACTION_ROMM_SAVE_PATH,
+   MENU_SETTING_ACTION_ROMM_SAVE_SYNCHRONIZE,
    MENU_SETTING_ACTION_RUN,
    MENU_SETTING_ACTION_CLOSE,
    MENU_SETTING_ACTION_CLOSE_HORIZONTAL,
@@ -776,6 +786,12 @@ size_t menu_playlist_random_selection(
 
 void menu_dialog_confirm_set(struct menu_state *menu_st,
       unsigned msg, unsigned cmd);
+void menu_dialog_confirm_set_text(struct menu_state *menu_st,
+      const char *message, unsigned cmd);
+void menu_dialog_confirm_set_choices(struct menu_state *menu_st,
+      const char *message, const char *choice0, const char *choice1,
+      const char *choice2, unsigned default_choice,
+      void (*choice_cb)(unsigned choice));
 void menu_dialog_confirm_clear(struct menu_state *menu_st);
 void menu_dialog_confirm(struct menu_state *menu_st);
 

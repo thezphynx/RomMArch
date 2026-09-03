@@ -207,6 +207,13 @@ GENERIC_DEFERRED_PUSH(deferred_push_wifi_settings_list,             DISPLAYLIST_
 GENERIC_DEFERRED_PUSH(deferred_push_wifi_networks_list,             DISPLAYLIST_WIFI_NETWORKS_LIST)
 GENERIC_DEFERRED_PUSH(deferred_push_network_settings_list,          DISPLAYLIST_NETWORK_SETTINGS_LIST)
 GENERIC_DEFERRED_PUSH(deferred_push_subsystem_settings_list,        DISPLAYLIST_SUBSYSTEM_SETTINGS_LIST)
+GENERIC_DEFERRED_PUSH(deferred_push_romm_sync_list,                  DISPLAYLIST_ROMM_SYNC_LIST)
+GENERIC_DEFERRED_PUSH(deferred_push_rommarch_config,                  DISPLAYLIST_ROMMARCH_CONFIG)
+GENERIC_DEFERRED_PUSH(deferred_push_romm_library,                     DISPLAYLIST_ROMM_LIBRARY)
+GENERIC_DEFERRED_PUSH(deferred_push_romm_platform_roms,               DISPLAYLIST_ROMM_PLATFORM_ROMS)
+GENERIC_DEFERRED_PUSH(deferred_push_romm_save_sync,                   DISPLAYLIST_ROMM_SAVE_SYNC)
+GENERIC_DEFERRED_PUSH(deferred_push_romm_save_directories,             DISPLAYLIST_ROMM_SAVE_DIRECTORIES)
+GENERIC_DEFERRED_PUSH(deferred_push_romm_save_platform,               DISPLAYLIST_ROMM_SAVE_PLATFORM)
 GENERIC_DEFERRED_PUSH(deferred_push_network_hosting_settings_list,  DISPLAYLIST_NETWORK_HOSTING_SETTINGS_LIST)
 GENERIC_DEFERRED_PUSH(deferred_push_netplay_kick_list,              DISPLAYLIST_NETPLAY_KICK_LIST)
 GENERIC_DEFERRED_PUSH(deferred_push_netplay_ban_list,               DISPLAYLIST_NETPLAY_BAN_LIST)
@@ -657,6 +664,13 @@ static int menu_cbs_init_bind_deferred_push_compare_label(
       {MENU_ENUM_LABEL_DEFERRED_UPDATER_SETTINGS_LIST, deferred_push_updater_settings_list},
       {MENU_ENUM_LABEL_DEFERRED_NETWORK_SETTINGS_LIST, deferred_push_network_settings_list},
       {MENU_ENUM_LABEL_DEFERRED_SUBSYSTEM_SETTINGS_LIST, deferred_push_subsystem_settings_list},
+      {MENU_ENUM_LABEL_DEFERRED_ROMM_SYNC_LIST, deferred_push_romm_sync_list},
+      {MENU_ENUM_LABEL_DEFERRED_ROMMARCH_CONFIG, deferred_push_rommarch_config},
+      {MENU_ENUM_LABEL_DEFERRED_ROMM_LIBRARY, deferred_push_romm_library},
+      {MENU_ENUM_LABEL_DEFERRED_ROMM_PLATFORM_ROMS, deferred_push_romm_platform_roms},
+      {MENU_ENUM_LABEL_DEFERRED_ROMM_SAVE_SYNC, deferred_push_romm_save_sync},
+      {MENU_ENUM_LABEL_DEFERRED_ROMM_SAVE_DIRECTORIES, deferred_push_romm_save_directories},
+      {MENU_ENUM_LABEL_DEFERRED_ROMM_SAVE_PLATFORM, deferred_push_romm_save_platform},
       {MENU_ENUM_LABEL_DEFERRED_NETWORK_HOSTING_SETTINGS_LIST, deferred_push_network_hosting_settings_list},
       {MENU_ENUM_LABEL_DEFERRED_NETPLAY_KICK_LIST, deferred_push_netplay_kick_list},
       {MENU_ENUM_LABEL_DEFERRED_NETPLAY_BAN_LIST, deferred_push_netplay_ban_list},

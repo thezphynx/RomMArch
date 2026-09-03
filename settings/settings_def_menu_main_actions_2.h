@@ -19,3 +19,7 @@ S_ACTION(SUBSYSTEM_SETTINGS,
       "subsystem_settings",
       "Subsystems",
       "Access subsystem settings for current content.")
+S_ACTION(ROMM_SYNC_LIST,
+      "romm_sync_list",
+      "RomMArch",
+      "Manage games selected for RomMArch save synchronization.")

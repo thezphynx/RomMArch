@@ -294,7 +294,14 @@ enum event_command
    CMD_EVENT_MICROPHONE_REINIT,
 #endif
    /* Add a playlist entry to another playlist. */
-   CMD_EVENT_ADD_TO_PLAYLIST
+   CMD_EVENT_ADD_TO_PLAYLIST,
+#ifdef HAVE_MENU
+   /* RomMArch confirmation actions. */
+   CMD_EVENT_ROMMARCH_DISCARD_PENDING_EXIT,
+   CMD_EVENT_ROMMARCH_DELETE_ROM_CONFIRM,
+   CMD_EVENT_ROMMARCH_DELETE_ROM_EXECUTE,
+   CMD_EVENT_ROMMARCH_SAVE_INCOMPLETE_EXIT
+#endif
 };
 
 enum cmd_source_t

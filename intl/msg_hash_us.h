@@ -38013,3 +38013,20 @@ MSG_HASH(MENU_ENUM_LABEL_VALUE_##T, us)
 #undef S_UINT_AT_EX_H
 #undef S_UINT_AT_EX_NS_H
 #undef SETTINGS_DEF_STRINGS_PASS
+
+MSG_HASH(
+   MENU_ENUM_LABEL_VALUE_ROMMARCH_CONFIG,
+   "RomM Configuration"
+   )
+MSG_HASH(
+   MENU_ENUM_LABEL_VALUE_ROMM_SAVE_SYNC,
+   "Save Synchronization"
+   )
+MSG_HASH(
+   MENU_ENUM_LABEL_VALUE_ROMM_SAVE_DIRECTORIES,
+   "Configure Local Save Directories"
+   )
+MSG_HASH(
+   MENU_ENUM_LABEL_VALUE_ROMM_SAVE_PLATFORM,
+   "Save Synchronization"
+   )

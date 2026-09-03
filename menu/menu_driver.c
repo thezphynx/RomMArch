@@ -3433,9 +3433,11 @@ bool menu_shader_manager_save_auto_preset(
 }
 #endif
 
+static void menu_dialog_confirm_reset(struct menu_state *menu_st);
+
 static enum action_iterate_type action_iterate_type(const char *label, struct menu_state *menu_st)
 {
-   if (menu_st->dialog_st.confirm_msg && menu_st->dialog_st.confirm_cmd)
+   if (menu_st->dialog_st.confirm_cmd)
       return ITERATE_TYPE_CONFIRM;
    if (!strcmp(label, "info_screen"))
       return ITERATE_TYPE_INFO;
@@ -7452,9 +7454,13 @@ static int generic_menu_iterate(
             BIT64_SET(menu->state, MENU_STATE_POP_STACK);
          break;
       case ITERATE_TYPE_CONFIRM:
-         strlcpy(menu->menu_state_msg,
-               msg_hash_to_str((enum msg_hash_enums)menu_st->dialog_st.confirm_msg),
-               sizeof(menu->menu_state_msg));
+         if (menu_st->dialog_st.confirm_msg_text[0])
+            strlcpy(menu->menu_state_msg, menu_st->dialog_st.confirm_msg_text,
+                  sizeof(menu->menu_state_msg));
+         else
+            strlcpy(menu->menu_state_msg,
+                  msg_hash_to_str((enum msg_hash_enums)menu_st->dialog_st.confirm_msg),
+                  sizeof(menu->menu_state_msg));
 
 #ifdef HAVE_ACCESSIBILITY
          if (     (iterate_type != last_iterate_type)
@@ -7469,16 +7475,43 @@ static int generic_menu_iterate(
 
          BIT64_SET(menu->state, MENU_STATE_RENDER_MESSAGEBOX);
          BIT64_SET(menu->state, MENU_STATE_POST_ITERATE);
-         if (     action == MENU_ACTION_OK
-               || action == MENU_ACTION_SELECT
-               || action == MENU_ACTION_CANCEL
-               || action == MENU_ACTION_INFO)
-            BIT64_SET(menu->state, MENU_STATE_POP_STACK);
-
          if (menu_st->dialog_st.confirm_cmd)
          {
-            if (action == MENU_ACTION_OK || action == MENU_ACTION_SELECT)
-               menu_dialog_confirm(menu_st);
+            if (menu_st->dialog_st.confirm_three_choice)
+            {
+               if (action == MENU_ACTION_LEFT || action == MENU_ACTION_UP)
+                  menu_st->dialog_st.confirm_choice =
+                        (menu_st->dialog_st.confirm_choice + 2) % 3;
+               else if (action == MENU_ACTION_RIGHT || action == MENU_ACTION_DOWN)
+                  menu_st->dialog_st.confirm_choice =
+                        (menu_st->dialog_st.confirm_choice + 1) % 3;
+               else if (action == MENU_ACTION_OK || action == MENU_ACTION_SELECT)
+               {
+                  unsigned choice = menu_st->dialog_st.confirm_choice;
+                  void (*cb)(unsigned) = menu_st->dialog_st.confirm_choice_cb;
+                  menu_dialog_confirm_clear(menu_st);
+                  if (cb) cb(choice);
+               }
+               else if (action == MENU_ACTION_CANCEL || action == MENU_ACTION_INFO)
+               {
+                  void (*cb)(unsigned) = menu_st->dialog_st.confirm_choice_cb;
+                  menu_dialog_confirm_clear(menu_st);
+                  if (cb) cb(0);
+               }
+            }
+            else if (     action == MENU_ACTION_LEFT
+                  || action == MENU_ACTION_RIGHT
+                  || action == MENU_ACTION_UP
+                  || action == MENU_ACTION_DOWN)
+               menu_st->dialog_st.confirm_selection_ok =
+                     !menu_st->dialog_st.confirm_selection_ok;
+            else if (action == MENU_ACTION_OK || action == MENU_ACTION_SELECT)
+            {
+               if (menu_st->dialog_st.confirm_selection_ok)
+                  menu_dialog_confirm(menu_st);
+               else
+                  menu_dialog_confirm_clear(menu_st);
+            }
             else if (action == MENU_ACTION_CANCEL || action == MENU_ACTION_INFO)
                menu_dialog_confirm_clear(menu_st);
          }
@@ -8605,9 +8638,17 @@ static void menu_dialog_confirm_reset(struct menu_state *menu_st)
 {
    menu_st->dialog_st.confirm_msg = MSG_UNKNOWN;
    menu_st->dialog_st.confirm_cmd = CMD_EVENT_NONE;
+   menu_st->dialog_st.confirm_msg_text[0] = '\0';
 
    menu_st->dialog_st.confirm_hover_ok     = false;
    menu_st->dialog_st.confirm_hover_back   = false;
+   menu_st->dialog_st.confirm_selection_ok = false;
+   menu_st->dialog_st.confirm_three_choice = false;
+   menu_st->dialog_st.confirm_choice = 0;
+   menu_st->dialog_st.confirm_choice_labels[0][0] = '\0';
+   menu_st->dialog_st.confirm_choice_labels[1][0] = '\0';
+   menu_st->dialog_st.confirm_choice_labels[2][0] = '\0';
+   menu_st->dialog_st.confirm_choice_cb = NULL;
 
    BIT64_CLEAR(menu_st->driver_data->state, MENU_STATE_RENDER_MESSAGEBOX);
    menu_st->driver_data->menu_state_msg[0] = '\0';
@@ -8618,6 +8659,52 @@ void menu_dialog_confirm_set(struct menu_state *menu_st, unsigned msg, unsigned 
    menu_st->dialog_st.confirm_msg = msg;
    menu_st->dialog_st.confirm_cmd = cmd;
    menu_st->dialog_st.pending_cmd = CMD_EVENT_NONE;
+   menu_st->dialog_st.confirm_selection_ok = false;
+   menu_st->dialog_st.confirm_three_choice = false;
+   menu_st->dialog_st.confirm_choice_cb = NULL;
+}
+
+void menu_dialog_confirm_set_text(struct menu_state *menu_st,
+      const char *message, unsigned cmd)
+{
+   menu_st->dialog_st.confirm_msg = MSG_UNKNOWN;
+   menu_st->dialog_st.confirm_cmd = cmd;
+   menu_st->dialog_st.pending_cmd = CMD_EVENT_NONE;
+   menu_st->dialog_st.confirm_selection_ok = false;
+   menu_st->dialog_st.confirm_three_choice = false;
+   menu_st->dialog_st.confirm_choice_cb = NULL;
+   if (message)
+      strlcpy(menu_st->dialog_st.confirm_msg_text, message,
+            sizeof(menu_st->dialog_st.confirm_msg_text));
+   else
+      menu_st->dialog_st.confirm_msg_text[0] = '\0';
+}
+
+
+void menu_dialog_confirm_set_choices(struct menu_state *menu_st,
+      const char *message, const char *choice0, const char *choice1,
+      const char *choice2, unsigned default_choice,
+      void (*choice_cb)(unsigned choice))
+{
+   menu_st->dialog_st.confirm_msg = MSG_UNKNOWN;
+   /* Non-zero sentinel keeps ITERATE_TYPE_CONFIRM interactive. */
+   menu_st->dialog_st.confirm_cmd = CMD_EVENT_NONE + 1;
+   menu_st->dialog_st.pending_cmd = CMD_EVENT_NONE;
+   menu_st->dialog_st.confirm_selection_ok = false;
+   menu_st->dialog_st.confirm_three_choice = true;
+   menu_st->dialog_st.confirm_choice = default_choice < 3 ? default_choice : 0;
+   menu_st->dialog_st.confirm_choice_cb = choice_cb;
+   strlcpy(menu_st->dialog_st.confirm_choice_labels[0], choice0 ? choice0 : "Cancel",
+         sizeof(menu_st->dialog_st.confirm_choice_labels[0]));
+   strlcpy(menu_st->dialog_st.confirm_choice_labels[1], choice1 ? choice1 : "Use 3DS Save",
+         sizeof(menu_st->dialog_st.confirm_choice_labels[1]));
+   strlcpy(menu_st->dialog_st.confirm_choice_labels[2], choice2 ? choice2 : "Use RomM Save",
+         sizeof(menu_st->dialog_st.confirm_choice_labels[2]));
+   if (message)
+      strlcpy(menu_st->dialog_st.confirm_msg_text, message,
+            sizeof(menu_st->dialog_st.confirm_msg_text));
+   else
+      menu_st->dialog_st.confirm_msg_text[0] = '\0';
 }
 
 void menu_dialog_confirm_clear(struct menu_state *menu_st)
@@ -8628,6 +8715,8 @@ void menu_dialog_confirm_clear(struct menu_state *menu_st)
 
 void menu_dialog_confirm(struct menu_state *menu_st)
 {
-   menu_st->dialog_st.pending_cmd = menu_st->dialog_st.confirm_cmd;
+   unsigned cmd = menu_st->dialog_st.confirm_cmd;
    menu_dialog_confirm_reset(menu_st);
+   if (cmd != CMD_EVENT_NONE)
+      command_event((enum event_command)cmd, NULL);
 }

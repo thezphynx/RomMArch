@@ -16,6 +16,13 @@
  */
 
 #include <math.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <stdarg.h>
+#include <stdint.h>
+#include <string.h>
+#include <time.h>
+#include <sys/stat.h>
 #include <compat/strl.h>
 #include <array/rbuf.h>
 #include <file/file_path.h>
@@ -57,6 +64,8 @@
 #include "../menu_shader.h"
 #endif
 #include "../menu_input.h"
+#include "../../romm/romm_config.h"
+#include "../../romm/romm_library.h"
 
 #include "../../core.h"
 #include "../../configuration.h"
@@ -75,12 +84,14 @@
 #endif
 #include "../../tasks/task_content.h"
 #include "../../tasks/task_file_transfer.h"
+#include <queues/task_queue.h>
 #include "../../tasks/tasks_internal.h"
 #include "../../input/input_remapping.h"
 #include "../../paths.h"
 #include "../../playlist.h"
 #include "../../retroarch.h"
 #include "../../runloop.h"
+#include "../../romm/romm_sync_list.h"
 #include "../../verbosity.h"
 #include "../../lakka.h"
 #ifdef HAVE_BLUETOOTH
@@ -173,6 +184,11 @@ enum
    info.enum_idx      = a; \
    dl_type            = b;
 
+
+#ifdef HAVE_NETWORKING
+static void rommarch_platforms_request(void);
+static void rommarch_roms_request(long platform_id, unsigned page);
+#endif
 
 #define DEFAULT_ACTION_OK_SET(funcname, _id, _flush) \
 static int (funcname)(const char *path, const char *label, unsigned type, size_t idx, size_t entry_idx) \
@@ -457,6 +473,20 @@ static enum msg_hash_enums action_ok_dl_to_enum(unsigned lbl)
          return MENU_ENUM_LABEL_DEFERRED_NETPLAY_LOBBY_FILTERS_LIST;
       case ACTION_OK_DL_SUBSYSTEM_SETTINGS_LIST:
          return MENU_ENUM_LABEL_DEFERRED_SUBSYSTEM_SETTINGS_LIST;
+      case ACTION_OK_DL_ROMM_SYNC_LIST:
+         return MENU_ENUM_LABEL_DEFERRED_ROMM_SYNC_LIST;
+      case ACTION_OK_DL_ROMMARCH_CONFIG:
+         return MENU_ENUM_LABEL_DEFERRED_ROMMARCH_CONFIG;
+      case ACTION_OK_DL_ROMM_LIBRARY:
+         return MENU_ENUM_LABEL_DEFERRED_ROMM_LIBRARY;
+      case ACTION_OK_DL_ROMM_PLATFORM_ROMS:
+         return MENU_ENUM_LABEL_DEFERRED_ROMM_PLATFORM_ROMS;
+      case ACTION_OK_DL_ROMM_SAVE_SYNC:
+         return MENU_ENUM_LABEL_DEFERRED_ROMM_SAVE_SYNC;
+      case ACTION_OK_DL_ROMM_SAVE_DIRECTORIES:
+         return MENU_ENUM_LABEL_DEFERRED_ROMM_SAVE_DIRECTORIES;
+      case ACTION_OK_DL_ROMM_SAVE_PLATFORM:
+         return MENU_ENUM_LABEL_DEFERRED_ROMM_SAVE_PLATFORM;
       case ACTION_OK_DL_NETWORK_SETTINGS_LIST:
          return MENU_ENUM_LABEL_DEFERRED_NETWORK_SETTINGS_LIST;
       case ACTION_OK_DL_BLUETOOTH_SETTINGS_LIST:
@@ -1817,6 +1847,13 @@ int generic_action_ok_displaylist_push(
       case ACTION_OK_DL_NETPLAY_BAN_LIST:
       case ACTION_OK_DL_NETPLAY_LOBBY_FILTERS_LIST:
       case ACTION_OK_DL_SUBSYSTEM_SETTINGS_LIST:
+      case ACTION_OK_DL_ROMM_SYNC_LIST:
+      case ACTION_OK_DL_ROMMARCH_CONFIG:
+      case ACTION_OK_DL_ROMM_LIBRARY:
+      case ACTION_OK_DL_ROMM_PLATFORM_ROMS:
+      case ACTION_OK_DL_ROMM_SAVE_SYNC:
+      case ACTION_OK_DL_ROMM_SAVE_DIRECTORIES:
+      case ACTION_OK_DL_ROMM_SAVE_PLATFORM:
       case ACTION_OK_DL_BLUETOOTH_SETTINGS_LIST:
       case ACTION_OK_DL_WIFI_SETTINGS_LIST:
       case ACTION_OK_DL_WIFI_NETWORKS_LIST:
@@ -2016,6 +2053,11 @@ static const ok_dl_map_t ok_dl_map[] = {
    { MENU_ENUM_LABEL_NETPLAY_BAN, ACTION_OK_DL_NETPLAY_BAN_LIST },
    { MENU_ENUM_LABEL_NETPLAY_LOBBY_FILTERS, ACTION_OK_DL_NETPLAY_LOBBY_FILTERS_LIST },
    { MENU_ENUM_LABEL_SUBSYSTEM_SETTINGS, ACTION_OK_DL_SUBSYSTEM_SETTINGS_LIST },
+   { MENU_ENUM_LABEL_ROMM_SYNC_LIST, ACTION_OK_DL_ROMM_SYNC_LIST },
+   { MENU_ENUM_LABEL_ROMMARCH_CONFIG, ACTION_OK_DL_ROMMARCH_CONFIG },
+   { MENU_ENUM_LABEL_ROMM_LIBRARY, ACTION_OK_DL_ROMM_LIBRARY },
+   { MENU_ENUM_LABEL_ROMM_SAVE_SYNC, ACTION_OK_DL_ROMM_SAVE_SYNC },
+   { MENU_ENUM_LABEL_ROMM_SAVE_DIRECTORIES, ACTION_OK_DL_ROMM_SAVE_DIRECTORIES },
    { MENU_ENUM_LABEL_NETWORK_SETTINGS, ACTION_OK_DL_NETWORK_SETTINGS_LIST },
    { MENU_ENUM_LABEL_LAKKA_SERVICES, ACTION_OK_DL_LAKKA_SERVICES_LIST },
    { MENU_ENUM_LABEL_USER_SETTINGS, ACTION_OK_DL_USER_SETTINGS_LIST },
@@ -2038,9 +2080,22 @@ static int action_ok_dl_from_map(const char *path,
    for (i = 0; i < ARRAY_SIZE(ok_dl_map); i++)
       if (string_is_equal(label,
             msg_hash_to_str((enum msg_hash_enums)ok_dl_map[i].enum_idx)))
+      {
+#ifdef HAVE_NETWORKING
+         if (ok_dl_map[i].dl_id == ACTION_OK_DL_ROMM_LIBRARY ||
+             ok_dl_map[i].dl_id == ACTION_OK_DL_ROMM_SAVE_SYNC ||
+             ok_dl_map[i].dl_id == ACTION_OK_DL_ROMM_SAVE_DIRECTORIES)
+         {
+            char server[768], token[768];
+            if (romm_config_get_server_url(server, sizeof(server)) && *server &&
+                romm_config_get_api_token(token, sizeof(token)) && *token)
+               rommarch_platforms_request();
+         }
+#endif
          return generic_action_ok_displaylist_push(path, NULL,
                label, type, idx, entry_idx,
                (unsigned)ok_dl_map[i].dl_id);
+      }
    return generic_action_ok_displaylist_push(path, NULL,
          label, type, idx, entry_idx, ACTION_OK_DL_OPEN_ARCHIVE);
 }
@@ -3499,6 +3554,506 @@ static int action_ok_bluetooth(const char *path, const char *label,
 }
 #endif
 
+static void menu_input_rommarch_server_cb(void *userdata, const char *str)
+{
+   struct menu_state *menu_st = menu_state_get_ptr();
+
+   if (str)
+   {
+      romm_config_set_server_url(str);
+      menu_st->flags |= MENU_ST_FLAG_ENTRIES_NEED_REFRESH;
+   }
+
+   menu_input_dialog_end();
+}
+
+static int action_ok_rommarch_server_edit(const char *path,
+      const char *label_setting, unsigned type, size_t idx, size_t entry_idx)
+{
+   menu_input_ctx_line_t line;
+
+   line.label         = "RomM Server";
+   line.label_setting = label_setting;
+   line.type          = type;
+   line.idx           = (unsigned)idx;
+   line.cb            = menu_input_rommarch_server_cb;
+
+   if (!menu_input_dialog_start(&line))
+      return -1;
+
+   return 0;
+}
+
+static void menu_input_rommarch_api_token_cb(void *userdata, const char *str)
+{
+   struct menu_state *menu_st = menu_state_get_ptr();
+   if (str)
+   {
+      romm_config_set_api_token(str);
+      menu_st->flags |= MENU_ST_FLAG_ENTRIES_NEED_REFRESH;
+   }
+   menu_input_dialog_end();
+}
+
+static void menu_input_rommarch_roms_path_cb(void *userdata, const char *str)
+{
+   struct menu_state *menu_st = menu_state_get_ptr();
+   if (str)
+   {
+      romm_config_set_roms_path(str);
+      menu_st->flags |= MENU_ST_FLAG_ENTRIES_NEED_REFRESH;
+   }
+   menu_input_dialog_end();
+}
+
+static int action_ok_rommarch_text_edit(const char *label_setting,
+      unsigned type, size_t idx, const char *title,
+      void (*cb)(void*, const char*))
+{
+   menu_input_ctx_line_t line;
+   line.label         = title;
+   line.label_setting = label_setting;
+   line.type          = type;
+   line.idx           = (unsigned)idx;
+   line.cb            = cb;
+   if (!menu_input_dialog_start(&line))
+      return -1;
+   return 0;
+}
+
+static int action_ok_rommarch_api_token_edit(const char *path,
+      const char *label_setting, unsigned type, size_t idx, size_t entry_idx)
+{
+   return action_ok_rommarch_text_edit(label_setting, type, idx,
+         "API Token", menu_input_rommarch_api_token_cb);
+}
+
+static int action_ok_rommarch_roms_path_edit(const char *path,
+      const char *label_setting, unsigned type, size_t idx, size_t entry_idx)
+{
+   return action_ok_rommarch_text_edit(label_setting, type, idx,
+         "ROM Directory", menu_input_rommarch_roms_path_cb);
+}
+
+
+#ifdef HAVE_NETWORKING
+static void cb_rommarch_platforms(retro_task_t *task,
+      void *task_data, void *user_data, const char *err)
+{
+   http_transfer_data_t *data = (http_transfer_data_t*)task_data;
+   struct menu_state *menu_st = menu_state_get_ptr();
+
+   romm_library_set_loading(false);
+
+   if (err || !data || !data->data)
+      romm_library_set_error("RomM Library: Connection failed");
+   else if (data->status == 401)
+      romm_library_set_error("RomM Library: Authentication failed (401)");
+   else if (data->status == 403)
+      romm_library_set_error("RomM Library: Permission denied (403)");
+   else if (data->status != 200)
+   {
+      char msg[96];
+      snprintf(msg, sizeof(msg), "RomM Library: HTTP %d", data->status);
+      romm_library_set_error(msg);
+   }
+   else if (!romm_library_parse_platforms_response(data->data, data->len))
+      romm_library_set_error("RomM Library: Could not parse platforms");
+
+   menu_st->flags |= MENU_ST_FLAG_ENTRIES_NEED_REFRESH;
+}
+
+static void cb_rommarch_roms(retro_task_t *task,
+      void *task_data, void *user_data, const char *err)
+{
+   http_transfer_data_t *data = (http_transfer_data_t*)task_data;
+   struct menu_state *menu_st = menu_state_get_ptr();
+   char roms_path[768];
+   long platform_id = romm_library_get_platform_id();
+   unsigned page = romm_library_get_page();
+
+   romm_library_set_loading(false);
+
+   if (err || !data || !data->data)
+      romm_library_set_error("RomM Library: Connection failed");
+   else if (data->status == 401)
+      romm_library_set_error("RomM Library: Authentication failed (401)");
+   else if (data->status == 403)
+      romm_library_set_error("RomM Library: Permission denied (403)");
+   else if (data->status != 200)
+   {
+      char msg[96];
+      snprintf(msg, sizeof(msg), "RomM Library: HTTP %d", data->status);
+      romm_library_set_error(msg);
+   }
+   else
+   {
+      romm_config_get_roms_path(roms_path, sizeof(roms_path));
+      if (!romm_library_parse_response(data->data, data->len,
+               platform_id, page, roms_path))
+         romm_library_set_error("RomM Library: Could not parse ROM list");
+   }
+
+   menu_st->flags |= MENU_ST_FLAG_ENTRIES_NEED_REFRESH;
+}
+
+static bool rommarch_build_api_url(char *url, size_t url_size,
+      const char *server, const char *suffix)
+{
+   size_t len;
+   if (!url || !url_size || !server || !*server || !suffix)
+      return false;
+   strlcpy(url, server, url_size);
+   len = strlen(url);
+   while (len > 0 && url[len - 1] == '/')
+      url[--len] = '\0';
+   if (len >= 4 && !strcmp(url + len - 4, "/api"))
+      strlcat(url, suffix, url_size);
+   else
+   {
+      strlcat(url, "/api", url_size);
+      strlcat(url, suffix, url_size);
+   }
+   return true;
+}
+
+static bool rommarch_get_auth(char *server, size_t server_size,
+      char *token, size_t token_size, char *headers, size_t headers_size)
+{
+   if (!romm_config_get_server_url(server, server_size) || !*server)
+   {
+      romm_library_set_loading(false);
+      romm_library_set_error("RomM Library: Configure server first");
+      return false;
+   }
+   if (!romm_config_get_api_token(token, token_size) || !*token)
+   {
+      romm_library_set_loading(false);
+      romm_library_set_error("RomM Library: Configure API token first");
+      return false;
+   }
+   snprintf(headers, headers_size,
+         "Authorization: Bearer %s\r\nAccept: application/json\r\n", token);
+   return true;
+}
+
+static void rommarch_platforms_request(void)
+{
+   char server[768];
+   char token[768];
+   char url[1152];
+   char headers[896];
+
+   romm_library_clear_platforms();
+   romm_library_set_loading(true);
+
+   if (!rommarch_get_auth(server, sizeof(server), token, sizeof(token),
+            headers, sizeof(headers)))
+      return;
+
+   rommarch_build_api_url(url, sizeof(url), server, "/platforms");
+
+   if (!task_push_http_transfer_with_headers(url, true, "GET", headers,
+            cb_rommarch_platforms, NULL))
+   {
+      romm_library_set_loading(false);
+      romm_library_set_error("RomM Library: Unable to start request");
+   }
+}
+
+static void rommarch_roms_request(long platform_id, unsigned page)
+{
+   char server[768];
+   char token[768];
+   char suffix[512];
+   char url[1152];
+   char headers[896];
+   unsigned offset = page * ROMM_LIBRARY_PAGE_SIZE;
+
+   romm_library_clear();
+   romm_library_set_context(platform_id, page);
+   romm_library_set_loading(true);
+
+   if (!rommarch_get_auth(server, sizeof(server), token, sizeof(token),
+            headers, sizeof(headers)))
+      return;
+
+   snprintf(suffix, sizeof(suffix),
+         "/roms?platform_ids=%ld&limit=%u&offset=%u&order_by=name&order_dir=asc&with_char_index=false&with_filter_values=false&with_rom_id_index=false",
+         platform_id, ROMM_LIBRARY_PAGE_SIZE, offset);
+   rommarch_build_api_url(url, sizeof(url), server, suffix);
+
+   if (!task_push_http_transfer_with_headers(url, true, "GET", headers,
+            cb_rommarch_roms, NULL))
+   {
+      romm_library_set_loading(false);
+      romm_library_set_error("RomM Library: Unable to start request");
+   }
+}
+
+static void cb_rommarch_test_connection(retro_task_t *task,
+      void *task_data, void *user_data, const char *err)
+{
+   http_transfer_data_t *data = (http_transfer_data_t*)task_data;
+   const char *msg            = NULL;
+   enum message_queue_category category = MESSAGE_QUEUE_CATEGORY_INFO;
+
+   if (err || !data)
+   {
+      msg      = "RomMArch: Connection failed";
+      category = MESSAGE_QUEUE_CATEGORY_ERROR;
+   }
+   else if (data->status == 200)
+      msg = "RomMArch: Connected and authenticated";
+   else if (data->status == 401)
+   {
+      msg      = "RomMArch: Authentication failed (401)";
+      category = MESSAGE_QUEUE_CATEGORY_ERROR;
+   }
+   else if (data->status == 403)
+   {
+      msg      = "RomMArch: Token lacks ROM read permission (403)";
+      category = MESSAGE_QUEUE_CATEGORY_ERROR;
+   }
+   else
+   {
+      static char status_msg[96];
+      snprintf(status_msg, sizeof(status_msg),
+            "RomMArch: Server returned HTTP %d", data->status);
+      msg      = status_msg;
+      category = MESSAGE_QUEUE_CATEGORY_ERROR;
+   }
+
+   runloop_msg_queue_push(msg, strlen(msg), 1, 240, true, NULL,
+         MESSAGE_QUEUE_ICON_DEFAULT, category);
+}
+
+static int action_ok_rommarch_test_connection(const char *path,
+      const char *label, unsigned type, size_t idx, size_t entry_idx)
+{
+   char server[768];
+   char token[768];
+   char url[1024];
+   char headers[896];
+   size_t len;
+
+   if (!romm_config_get_server_url(server, sizeof(server)) || !*server)
+   {
+      const char *msg = "RomMArch: Configure RomM Server first";
+      runloop_msg_queue_push(msg, strlen(msg), 1, 240, true, NULL,
+            MESSAGE_QUEUE_ICON_DEFAULT, MESSAGE_QUEUE_CATEGORY_ERROR);
+      return 0;
+   }
+
+   if (!romm_config_get_api_token(token, sizeof(token)) || !*token)
+   {
+      const char *msg = "RomMArch: Configure API Token first";
+      runloop_msg_queue_push(msg, strlen(msg), 1, 240, true, NULL,
+            MESSAGE_QUEUE_ICON_DEFAULT, MESSAGE_QUEUE_CATEGORY_ERROR);
+      return 0;
+   }
+
+   strlcpy(url, server, sizeof(url));
+   len = strlen(url);
+   while (len > 0 && url[len - 1] == '/')
+      url[--len] = '\0';
+
+   if (len >= 4 && !strcmp(url + len - 4, "/api"))
+      strlcat(url, "/roms?limit=1", sizeof(url));
+   else
+      strlcat(url, "/api/roms?limit=1", sizeof(url));
+
+   snprintf(headers, sizeof(headers),
+         "Authorization: Bearer %s\r\nAccept: application/json\r\n", token);
+
+   {
+      const char *msg = "RomMArch: Testing connection...";
+      runloop_msg_queue_push(msg, strlen(msg), 1, 120, true, NULL,
+            MESSAGE_QUEUE_ICON_DEFAULT, MESSAGE_QUEUE_CATEGORY_INFO);
+   }
+
+   if (!task_push_http_transfer_with_headers(url, true, "GET", headers,
+            cb_rommarch_test_connection, NULL))
+   {
+      const char *msg = "RomMArch: Unable to start network request";
+      runloop_msg_queue_push(msg, strlen(msg), 1, 240, true, NULL,
+            MESSAGE_QUEUE_ICON_DEFAULT, MESSAGE_QUEUE_CATEGORY_ERROR);
+   }
+
+   return 0;
+}
+
+
+#define ROMMARCH_SYNC_MAX_ENTRIES 256
+
+typedef struct rommarch_sync_state
+{
+   romm_library_entry_t entries[ROMMARCH_SYNC_MAX_ENTRIES];
+   size_t count;
+   size_t index;
+   unsigned downloaded;
+   unsigned skipped;
+   long platform_id;
+   char server[768];
+   char headers[896];
+   char roms_path[768];
+   char current_path[1152];
+} rommarch_sync_state_t;
+
+static rommarch_sync_state_t g_rommarch_sync;
+
+static void rommarch_sync_finish(const char *message,
+      enum message_queue_category category)
+{
+   if (message && *message)
+      runloop_msg_queue_push(message, strlen(message), 1, 300, true, NULL,
+            MESSAGE_QUEUE_ICON_DEFAULT, category);
+
+   menu_state_get_ptr()->flags |= MENU_ST_FLAG_ENTRIES_NEED_REFRESH;
+}
+
+static void rommarch_sync_next(void);
+
+static void cb_rommarch_sync_download(retro_task_t *task,
+      void *task_data, void *user_data, const char *err)
+{
+   http_transfer_data_t *data = (http_transfer_data_t*)task_data;
+   romm_library_entry_t *entry = NULL;
+
+   if (g_rommarch_sync.index < g_rommarch_sync.count)
+      entry = &g_rommarch_sync.entries[g_rommarch_sync.index];
+
+   if (err || !data || data->status < 200 || data->status >= 300)
+   {
+      char msg[160];
+      if (*g_rommarch_sync.current_path)
+         filestream_delete(g_rommarch_sync.current_path);
+      if (data)
+         snprintf(msg, sizeof(msg), "RomMArch: Download failed (HTTP %d)", data->status);
+      else
+         strlcpy(msg, "RomMArch: Download failed", sizeof(msg));
+      rommarch_sync_finish(msg, MESSAGE_QUEUE_CATEGORY_ERROR);
+      return;
+   }
+
+   if (entry)
+      romm_library_mark_local(entry->rom_id, true);
+
+   g_rommarch_sync.downloaded++;
+   g_rommarch_sync.index++;
+   rommarch_sync_next();
+}
+
+static void rommarch_sync_next(void)
+{
+   while (g_rommarch_sync.index < g_rommarch_sync.count)
+   {
+      romm_library_entry_t *entry = &g_rommarch_sync.entries[g_rommarch_sync.index];
+      char suffix[ROMM_LIBRARY_FILENAME_LENGTH + 96];
+      char raw_url[1536];
+      char url[2048];
+      char title[ROMM_LIBRARY_FILENAME_LENGTH + 96];
+      const char *filename = *entry->filename ? entry->filename : entry->name;
+      size_t len;
+
+      strlcpy(g_rommarch_sync.current_path, g_rommarch_sync.roms_path,
+            sizeof(g_rommarch_sync.current_path));
+      len = strlen(g_rommarch_sync.current_path);
+      if (len && g_rommarch_sync.current_path[len - 1] != '/' &&
+            g_rommarch_sync.current_path[len - 1] != '\\')
+         strlcat(g_rommarch_sync.current_path, "/",
+               sizeof(g_rommarch_sync.current_path));
+      strlcat(g_rommarch_sync.current_path, filename,
+            sizeof(g_rommarch_sync.current_path));
+
+      /* If the file appeared locally after it was queued, reconcile it
+       * instead of downloading a duplicate. */
+      if (path_is_valid(g_rommarch_sync.current_path))
+      {
+         romm_library_mark_local(entry->rom_id, true);
+         g_rommarch_sync.skipped++;
+         g_rommarch_sync.index++;
+         continue;
+      }
+
+      snprintf(suffix, sizeof(suffix), "/roms/%ld/content/%s",
+            entry->rom_id, filename);
+      rommarch_build_api_url(raw_url, sizeof(raw_url),
+            g_rommarch_sync.server, suffix);
+      net_http_urlencode_full(url, raw_url, sizeof(url));
+
+      snprintf(title, sizeof(title), "RomMArch %u/%u: %s",
+            g_rommarch_sync.downloaded + g_rommarch_sync.skipped + 1,
+            (unsigned)g_rommarch_sync.count, filename);
+
+      if (!task_push_http_download_file_with_headers(url,
+               g_rommarch_sync.current_path, false, title,
+               g_rommarch_sync.headers, cb_rommarch_sync_download, NULL))
+      {
+         rommarch_sync_finish("RomMArch: Unable to start download",
+               MESSAGE_QUEUE_CATEGORY_ERROR);
+      }
+      return;
+   }
+
+   {
+      char msg[160];
+      snprintf(msg, sizeof(msg),
+            "RomMArch: Synchronization complete - %u downloaded, %u already present",
+            g_rommarch_sync.downloaded, g_rommarch_sync.skipped);
+      rommarch_sync_finish(msg, MESSAGE_QUEUE_CATEGORY_INFO);
+   }
+}
+
+static int action_ok_romm_synchronize(const char *path,
+      const char *label, unsigned type, size_t idx, size_t entry_idx)
+{
+   char token[768];
+
+   memset(&g_rommarch_sync, 0, sizeof(g_rommarch_sync));
+   g_rommarch_sync.platform_id = romm_library_get_platform_id();
+   if (g_rommarch_sync.platform_id <= 0)
+      return -1;
+
+   if (!romm_config_get_roms_path(g_rommarch_sync.roms_path,
+            sizeof(g_rommarch_sync.roms_path)) || !*g_rommarch_sync.roms_path)
+   {
+      rommarch_sync_finish("RomMArch: Configure ROM Directory first",
+            MESSAGE_QUEUE_CATEGORY_ERROR);
+      return 0;
+   }
+
+   if (!rommarch_get_auth(g_rommarch_sync.server,
+            sizeof(g_rommarch_sync.server), token, sizeof(token),
+            g_rommarch_sync.headers, sizeof(g_rommarch_sync.headers)))
+   {
+      rommarch_sync_finish("RomMArch: Server or API Token is not configured",
+            MESSAGE_QUEUE_CATEGORY_ERROR);
+      return 0;
+   }
+
+   g_rommarch_sync.count = romm_library_pending_get(g_rommarch_sync.platform_id,
+         g_rommarch_sync.entries, ARRAY_SIZE(g_rommarch_sync.entries));
+
+   if (!g_rommarch_sync.count)
+   {
+      const char *msg = "RomMArch: No ROMs pending synchronization";
+      runloop_msg_queue_push(msg, strlen(msg), 1, 180, true, NULL,
+            MESSAGE_QUEUE_ICON_DEFAULT, MESSAGE_QUEUE_CATEGORY_INFO);
+      return 0;
+   }
+
+   {
+      const char *msg = "RomMArch: Synchronization started";
+      runloop_msg_queue_push(msg, strlen(msg), 1, 120, true, NULL,
+            MESSAGE_QUEUE_ICON_DEFAULT, MESSAGE_QUEUE_CATEGORY_INFO);
+   }
+
+   rommarch_sync_next();
+   return 0;
+}
+#endif
+
 #ifdef HAVE_NETWORKING
 #ifdef HAVE_WIFI
 static void menu_input_wifi_cb(void *userdata, const char *passphrase)
@@ -3518,6 +4073,7 @@ static void menu_input_wifi_cb(void *userdata, const char *passphrase)
 
    menu_input_dialog_end();
 }
+
 
 static int action_ok_wifi(const char *path, const char *label_setting,
       unsigned type, size_t idx, size_t entry_idx)
@@ -9300,6 +9856,7 @@ static int action_ok_smb_browse(const char *path,
 }
 #endif
 
+static int action_ok_rommarch_rom_dir_browser(const char *path, const char *label, unsigned type, size_t idx, size_t entry_idx);
 static int menu_cbs_init_bind_ok_compare_label(menu_file_list_cbs_t *cbs,
       const char *label)
 {
@@ -9578,6 +10135,12 @@ static int menu_cbs_init_bind_ok_compare_label(menu_file_list_cbs_t *cbs,
          {MENU_ENUM_LABEL_PLAYLISTS_TAB,                       action_ok_content_collection_list},
          {MENU_ENUM_LABEL_DISK_IMAGE_APPEND,                   action_ok_disk_image_append_list},
          {MENU_ENUM_LABEL_SUBSYSTEM_ADD,                       action_ok_subsystem_add_list},
+         {MENU_ENUM_LABEL_ROMMARCH_SERVER_EDIT,                 action_ok_rommarch_server_edit},
+         {MENU_ENUM_LABEL_ROMMARCH_API_TOKEN_EDIT,              action_ok_rommarch_api_token_edit},
+         {MENU_ENUM_LABEL_ROMMARCH_ROMS_PATH_EDIT,              action_ok_rommarch_rom_dir_browser},
+#ifdef HAVE_NETWORKING
+         {MENU_ENUM_LABEL_ROMMARCH_TEST_CONNECTION,            action_ok_rommarch_test_connection},
+#endif
 #ifdef _3DS
          {MENU_ENUM_LABEL_MENU_BOTTOM_SETTINGS,                action_ok_menu_bottom_list},
 #endif
@@ -9693,10 +10256,1490 @@ static int menu_cbs_init_bind_ok_compare_label(menu_file_list_cbs_t *cbs,
    return -1;
 }
 
+static int action_ok_romm_sync_toggle(const char *path,
+      const char *label, unsigned type, size_t idx, size_t entry_idx)
+{
+   romm_sync_entry_t entries[20];
+   size_t i;
+   size_t count;
+   long rom_id = path ? strtol(path, NULL, 10) : 0;
+
+   if (rom_id <= 0)
+      return -1;
+
+   count = romm_sync_list_load(entries, ARRAY_SIZE(entries));
+   for (i = 0; i < count; i++)
+   {
+      if (entries[i].rom_id == rom_id)
+      {
+         if (!romm_sync_list_set_enabled(rom_id, !entries[i].enabled))
+            return -1;
+
+         menu_state_get_ptr()->flags |= MENU_ST_FLAG_ENTRIES_NEED_REFRESH;
+         return 0;
+      }
+   }
+
+   return -1;
+}
+
+
+
+#define ROMMARCH_ROM_DIR_BROWSER_LABEL  "rommarch_rom_dir_browser"
+#define ROMMARCH_SAVE_DIR_BROWSER_LABEL "rommarch_save_dir_browser"
+
+static int action_ok_rommarch_open_dir_browser(const char *path,
+      const char *label, unsigned type, size_t idx, size_t entry_idx,
+      const char *browser_label, const char *current_path)
+{
+   menu_handle_t *menu = menu_state_get_ptr()->driver_data;
+   char start_path[PATH_MAX_LENGTH];
+   if (!menu)
+      return -1;
+   start_path[0] = '\0';
+   if (current_path && *current_path && path_is_directory(current_path))
+      strlcpy(start_path, current_path, sizeof(start_path));
+   filebrowser_set_type(FILEBROWSER_SELECT_DIR);
+   strlcpy(menu->filebrowser_label, browser_label, sizeof(menu->filebrowser_label));
+   return generic_action_ok_displaylist_push(path, start_path, browser_label,
+         type, idx, entry_idx, ACTION_OK_DL_FILE_BROWSER_SELECT_DIR);
+}
+
+static int action_ok_rommarch_rom_dir_browser(const char *path,
+      const char *label, unsigned type, size_t idx, size_t entry_idx)
+{
+   char current[768];
+   current[0] = '\0';
+   romm_config_get_roms_path(current, sizeof(current));
+   return action_ok_rommarch_open_dir_browser(path, label, type, idx, entry_idx,
+         ROMMARCH_ROM_DIR_BROWSER_LABEL, current);
+}
+
+static int action_ok_romm_save_platform(const char *path,
+      const char *label, unsigned type, size_t idx, size_t entry_idx)
+{
+   long platform_id = label ? strtol(label, NULL, 10) : 0;
+   const romm_platform_entry_t *platform = romm_library_find_platform(platform_id);
+   if (platform_id <= 0 || !platform)
+      return -1;
+   romm_config_set_save_platform_context(platform_id, platform->name);
+   return generic_action_ok_displaylist_push(path, NULL,
+         msg_hash_to_str(MENU_ENUM_LABEL_ROMM_SAVE_PLATFORM), type,
+         idx, entry_idx, ACTION_OK_DL_ROMM_SAVE_PLATFORM);
+}
+
+static int action_ok_romm_save_enable(const char *path,
+      const char *label, unsigned type, size_t idx, size_t entry_idx)
+{
+   long platform_id = romm_config_get_save_platform_id();
+   bool enabled;
+   if (platform_id <= 0)
+      return -1;
+   enabled = romm_config_get_save_enabled(platform_id);
+   if (!romm_config_set_save_enabled(platform_id, !enabled))
+      return -1;
+   menu_state_get_ptr()->flags |= MENU_ST_FLAG_ENTRIES_NEED_REFRESH;
+   return 0;
+}
+
+static int action_ok_romm_save_path(const char *path,
+      const char *label, unsigned type, size_t idx, size_t entry_idx)
+{
+   long platform_id = romm_config_get_save_platform_id();
+   char current[768];
+   if (platform_id <= 0 || !romm_config_get_save_enabled(platform_id))
+      return -1;
+   current[0] = '\0';
+   if (!romm_config_get_save_path(platform_id, current, sizeof(current)) || !*current)
+      strlcpy(current, "sdmc:/retroarch/cores/savefiles", sizeof(current));
+   return action_ok_rommarch_open_dir_browser(path, label, type, idx, entry_idx,
+         ROMMARCH_SAVE_DIR_BROWSER_LABEL, current);
+}
+
+static int action_ok_rommarch_use_directory(const char *path,
+      const char *label, unsigned type, size_t idx, size_t entry_idx)
+{
+   const char *menu_path = NULL;
+   menu_handle_t *menu = menu_state_get_ptr()->driver_data;
+   struct menu_state *menu_st = menu_state_get_ptr();
+   char selected[PATH_MAX_LENGTH];
+   if (!menu)
+      return -1;
+   selected[0] = '\0';
+   menu_entries_get_last_stack(&menu_path, NULL, NULL, NULL, NULL);
+   if (menu_path && *menu_path)
+      strlcpy(selected, menu_path, sizeof(selected));
+   if (!*selected)
+      return -1;
+
+   if (string_is_equal(menu->filebrowser_label, ROMMARCH_ROM_DIR_BROWSER_LABEL))
+   {
+      if (!romm_config_set_roms_path(selected))
+         return -1;
+#ifdef HAVE_NETWORKING
+      rommarch_platforms_request();
+#endif
+      filebrowser_clear_type();
+      menu_entries_flush_stack(msg_hash_to_str(MENU_ENUM_LABEL_DEFERRED_ROMM_LIBRARY), 0);
+   }
+   else if (string_is_equal(menu->filebrowser_label, ROMMARCH_SAVE_DIR_BROWSER_LABEL))
+   {
+      long platform_id = romm_config_get_save_platform_id();
+      if (platform_id <= 0 || !romm_config_set_save_path(platform_id, selected))
+         return -1;
+      filebrowser_clear_type();
+      menu_entries_flush_stack(msg_hash_to_str(MENU_ENUM_LABEL_DEFERRED_ROMM_SAVE_PLATFORM), 0);
+   }
+   else
+      return action_ok_path_use_directory(path, label, type, idx, entry_idx);
+
+   menu_st->flags |= MENU_ST_FLAG_ENTRIES_NEED_REFRESH;
+   return 0;
+}
+
+#ifdef HAVE_NETWORKING
+#define ROMMARCH_SAVE_SYNC_MAX_PLATFORMS 64
+#define ROMMARCH_SAVE_SYNC_MAX_ROMS      512
+#define ROMMARCH_SAVE_SYNC_MAX_FILES     512
+#define ROMMARCH_SAVE_SYNC_MAX_OPS       512
+#define ROMMARCH_SAVE_SYNC_PAGE_SIZE     50
+
+typedef struct rommarch_save_sync_rom
+{
+   long rom_id;
+   long platform_id;
+   char rom_filename[ROMM_LIBRARY_FILENAME_LENGTH];
+   char save_dir[PATH_MAX_LENGTH];
+} rommarch_save_sync_rom_t;
+
+typedef struct rommarch_save_sync_file
+{
+   long rom_id;
+   long platform_id;
+   char file[ROMM_LIBRARY_FILENAME_LENGTH];
+   char path[PATH_MAX_LENGTH];
+   char content_hash[33];
+   int64_t file_size_bytes;
+} rommarch_save_sync_file_t;
+
+typedef struct rommarch_server_save
+{
+   long rom_id;
+   long save_id;
+   char file[ROMM_LIBRARY_FILENAME_LENGTH];
+   char content_hash[65];
+   char updated_at[64];
+   char download_path[512];
+   bool missing_from_fs;
+} rommarch_server_save_t;
+
+typedef enum rommarch_save_sync_op_type
+{
+   ROMMARCH_SAVE_OP_NOOP = 0,
+   ROMMARCH_SAVE_OP_UPLOAD,
+   ROMMARCH_SAVE_OP_DOWNLOAD,
+   ROMMARCH_SAVE_OP_CONFLICT
+} rommarch_save_sync_op_type_t;
+
+typedef struct rommarch_save_sync_op
+{
+   rommarch_save_sync_op_type_t type;
+   long rom_id;
+   long save_id;
+   char file[ROMM_LIBRARY_FILENAME_LENGTH];
+   char slot[64];
+   char emulator[128];
+   char reason[256];
+   char local_content_hash[65];
+   char server_content_hash[65];
+   char server_updated_at[64];
+   char server_download_path[512];
+} rommarch_save_sync_op_t;
+
+typedef struct rommarch_save_sync_state
+{
+   bool active;
+   char device_id[64];
+   long platforms[ROMMARCH_SAVE_SYNC_MAX_PLATFORMS];
+   size_t platform_count;
+   size_t platform_index;
+   unsigned page;
+   rommarch_save_sync_rom_t roms[ROMMARCH_SAVE_SYNC_MAX_ROMS];
+   size_t rom_count;
+   rommarch_save_sync_file_t files[ROMMARCH_SAVE_SYNC_MAX_FILES];
+   size_t file_count;
+   rommarch_server_save_t server_saves[ROMMARCH_SAVE_SYNC_MAX_FILES];
+   size_t server_save_count;
+   size_t save_platform_index;
+   rommarch_save_sync_op_t ops[ROMMARCH_SAVE_SYNC_MAX_OPS];
+   size_t op_count;
+   size_t op_index;
+   size_t transfer_count;
+   unsigned uploaded;
+   unsigned downloaded;
+   unsigned noops;
+   unsigned conflicts;
+   unsigned failed;
+   unsigned progress;
+   char server[768];
+   char headers[896];
+   long session_id;
+   char current_path[PATH_MAX_LENGTH];
+   char current_target[PATH_MAX_LENGTH];
+   void *request_body;
+} rommarch_save_sync_state_t;
+
+static rommarch_save_sync_state_t g_rommarch_save_sync;
+
+/* A single umbrella task provides one persistent progress bar for the entire
+ * save-sync operation. Child HTTP requests remain asynchronous, but we avoid
+ * flooding the message queue with a new status notification for every phase. */
+static void rommarch_save_sync_progress_task_handler(retro_task_t *task)
+{
+   if (!task)
+      return;
+
+   if (!g_rommarch_save_sync.active)
+   {
+      task_set_progress(task, 100);
+      task_set_flags(task, RETRO_TASK_FLG_FINISHED, true);
+      return;
+   }
+
+   task_set_progress(task, (int8_t)g_rommarch_save_sync.progress);
+}
+
+static void rommarch_save_sync_progress_start(void)
+{
+   retro_task_t *task = task_init();
+   if (!task)
+      return;
+
+   task->handler  = rommarch_save_sync_progress_task_handler;
+   task->title    = strdup("RomMArch: Synchronizing saves");
+   task->progress = 0;
+   task_queue_push(task);
+}
+
+static void rommarch_save_sync_progress_set(unsigned progress)
+{
+   if (progress > 99)
+      progress = 99;
+   g_rommarch_save_sync.progress = progress;
+}
+
+/* Small SHA-1 implementation used only for save manifests. */
+typedef struct rommarch_sha1_ctx
+{
+   uint32_t h[5];
+   uint64_t total;
+   uint8_t block[64];
+   size_t used;
+} rommarch_sha1_ctx_t;
+
+static uint32_t rommarch_sha1_rol(uint32_t v, unsigned n)
+{
+   return (v << n) | (v >> (32 - n));
+}
+
+static void rommarch_sha1_transform(rommarch_sha1_ctx_t *ctx, const uint8_t block[64])
+{
+   uint32_t w[80];
+   uint32_t a, b, c, d, e, f, k, temp;
+   unsigned i;
+   for (i = 0; i < 16; i++)
+      w[i] = ((uint32_t)block[i * 4] << 24) |
+             ((uint32_t)block[i * 4 + 1] << 16) |
+             ((uint32_t)block[i * 4 + 2] << 8) |
+             (uint32_t)block[i * 4 + 3];
+   for (i = 16; i < 80; i++)
+      w[i] = rommarch_sha1_rol(w[i - 3] ^ w[i - 8] ^ w[i - 14] ^ w[i - 16], 1);
+
+   a = ctx->h[0]; b = ctx->h[1]; c = ctx->h[2]; d = ctx->h[3]; e = ctx->h[4];
+   for (i = 0; i < 80; i++)
+   {
+      if (i < 20)      { f = (b & c) | ((~b) & d); k = 0x5A827999U; }
+      else if (i < 40) { f = b ^ c ^ d;             k = 0x6ED9EBA1U; }
+      else if (i < 60) { f = (b & c) | (b & d) | (c & d); k = 0x8F1BBCDCU; }
+      else             { f = b ^ c ^ d;             k = 0xCA62C1D6U; }
+      temp = rommarch_sha1_rol(a, 5) + f + e + k + w[i];
+      e = d; d = c; c = rommarch_sha1_rol(b, 30); b = a; a = temp;
+   }
+   ctx->h[0] += a; ctx->h[1] += b; ctx->h[2] += c; ctx->h[3] += d; ctx->h[4] += e;
+}
+
+static void rommarch_sha1_init(rommarch_sha1_ctx_t *ctx)
+{
+   ctx->h[0] = 0x67452301U; ctx->h[1] = 0xEFCDAB89U;
+   ctx->h[2] = 0x98BADCFEU; ctx->h[3] = 0x10325476U;
+   ctx->h[4] = 0xC3D2E1F0U; ctx->total = 0; ctx->used = 0;
+}
+
+static void rommarch_sha1_update(rommarch_sha1_ctx_t *ctx, const void *data_, size_t len)
+{
+   const uint8_t *data = (const uint8_t*)data_;
+   ctx->total += len;
+   while (len)
+   {
+      size_t n = 64 - ctx->used;
+      if (n > len) n = len;
+      memcpy(ctx->block + ctx->used, data, n);
+      ctx->used += n; data += n; len -= n;
+      if (ctx->used == 64)
+      {
+         rommarch_sha1_transform(ctx, ctx->block);
+         ctx->used = 0;
+      }
+   }
+}
+
+static void rommarch_sha1_final(rommarch_sha1_ctx_t *ctx, uint8_t out[20])
+{
+   uint64_t bits = ctx->total * 8;
+   unsigned i;
+   ctx->block[ctx->used++] = 0x80;
+   if (ctx->used > 56)
+   {
+      while (ctx->used < 64) ctx->block[ctx->used++] = 0;
+      rommarch_sha1_transform(ctx, ctx->block);
+      ctx->used = 0;
+   }
+   while (ctx->used < 56) ctx->block[ctx->used++] = 0;
+   for (i = 0; i < 8; i++)
+      ctx->block[56 + i] = (uint8_t)(bits >> (56 - i * 8));
+   rommarch_sha1_transform(ctx, ctx->block);
+   for (i = 0; i < 5; i++)
+   {
+      out[i * 4]     = (uint8_t)(ctx->h[i] >> 24);
+      out[i * 4 + 1] = (uint8_t)(ctx->h[i] >> 16);
+      out[i * 4 + 2] = (uint8_t)(ctx->h[i] >> 8);
+      out[i * 4 + 3] = (uint8_t)ctx->h[i];
+   }
+}
+
+static bool rommarch_save_sha1_file(const char *path, char out[41])
+{
+   RFILE *fp;
+   uint8_t buffer[4096];
+   uint8_t digest[20];
+   rommarch_sha1_ctx_t ctx;
+   int64_t n;
+   unsigned i;
+   fp = filestream_open(path, RETRO_VFS_FILE_ACCESS_READ, RETRO_VFS_FILE_ACCESS_HINT_NONE);
+   if (!fp) return false;
+   rommarch_sha1_init(&ctx);
+   while ((n = filestream_read(fp, buffer, sizeof(buffer))) > 0)
+      rommarch_sha1_update(&ctx, buffer, (size_t)n);
+   filestream_close(fp);
+   if (n < 0) return false;
+   rommarch_sha1_final(&ctx, digest);
+   for (i = 0; i < 20; i++)
+      snprintf(out + i * 2, 3, "%02x", digest[i]);
+   out[40] = '\0';
+   return true;
+}
+
+typedef struct rommarch_md5_ctx
+{
+   uint32_t h[4];
+   uint64_t total;
+   uint8_t block[64];
+   size_t used;
+} rommarch_md5_ctx_t;
+
+static uint32_t rommarch_md5_rol(uint32_t x, unsigned n)
+{
+   return (x << n) | (x >> (32 - n));
+}
+
+static void rommarch_md5_transform(rommarch_md5_ctx_t *ctx, const uint8_t block[64])
+{
+   static const uint32_t k[64] = {
+      0xd76aa478U,0xe8c7b756U,0x242070dbU,0xc1bdceeeU,0xf57c0fafU,0x4787c62aU,0xa8304613U,0xfd469501U,
+      0x698098d8U,0x8b44f7afU,0xffff5bb1U,0x895cd7beU,0x6b901122U,0xfd987193U,0xa679438eU,0x49b40821U,
+      0xf61e2562U,0xc040b340U,0x265e5a51U,0xe9b6c7aaU,0xd62f105dU,0x02441453U,0xd8a1e681U,0xe7d3fbc8U,
+      0x21e1cde6U,0xc33707d6U,0xf4d50d87U,0x455a14edU,0xa9e3e905U,0xfcefa3f8U,0x676f02d9U,0x8d2a4c8aU,
+      0xfffa3942U,0x8771f681U,0x6d9d6122U,0xfde5380cU,0xa4beea44U,0x4bdecfa9U,0xf6bb4b60U,0xbebfbc70U,
+      0x289b7ec6U,0xeaa127faU,0xd4ef3085U,0x04881d05U,0xd9d4d039U,0xe6db99e5U,0x1fa27cf8U,0xc4ac5665U,
+      0xf4292244U,0x432aff97U,0xab9423a7U,0xfc93a039U,0x655b59c3U,0x8f0ccc92U,0xffeff47dU,0x85845dd1U,
+      0x6fa87e4fU,0xfe2ce6e0U,0xa3014314U,0x4e0811a1U,0xf7537e82U,0xbd3af235U,0x2ad7d2bbU,0xeb86d391U
+   };
+   static const uint8_t r[64] = {
+      7,12,17,22,7,12,17,22,7,12,17,22,7,12,17,22,
+      5,9,14,20,5,9,14,20,5,9,14,20,5,9,14,20,
+      4,11,16,23,4,11,16,23,4,11,16,23,4,11,16,23,
+      6,10,15,21,6,10,15,21,6,10,15,21,6,10,15,21
+   };
+   uint32_t m[16], a = ctx->h[0], b = ctx->h[1], c = ctx->h[2], d = ctx->h[3];
+   unsigned i;
+   for (i = 0; i < 16; i++)
+      m[i] = (uint32_t)block[i*4] | ((uint32_t)block[i*4+1] << 8) |
+             ((uint32_t)block[i*4+2] << 16) | ((uint32_t)block[i*4+3] << 24);
+   for (i = 0; i < 64; i++)
+   {
+      uint32_t f, g, tmp;
+      if (i < 16) { f = (b & c) | ((~b) & d); g = i; }
+      else if (i < 32) { f = (d & b) | ((~d) & c); g = (5*i + 1) & 15; }
+      else if (i < 48) { f = b ^ c ^ d; g = (3*i + 5) & 15; }
+      else { f = c ^ (b | (~d)); g = (7*i) & 15; }
+      tmp = d; d = c; c = b;
+      b = b + rommarch_md5_rol(a + f + k[i] + m[g], r[i]);
+      a = tmp;
+   }
+   ctx->h[0] += a; ctx->h[1] += b; ctx->h[2] += c; ctx->h[3] += d;
+}
+
+static void rommarch_md5_init(rommarch_md5_ctx_t *ctx)
+{
+   ctx->h[0] = 0x67452301U; ctx->h[1] = 0xefcdab89U;
+   ctx->h[2] = 0x98badcfeU; ctx->h[3] = 0x10325476U;
+   ctx->total = 0; ctx->used = 0;
+}
+
+static void rommarch_md5_update(rommarch_md5_ctx_t *ctx, const void *data_, size_t len)
+{
+   const uint8_t *data = (const uint8_t*)data_;
+   ctx->total += len;
+   while (len)
+   {
+      size_t n = 64 - ctx->used;
+      if (n > len) n = len;
+      memcpy(ctx->block + ctx->used, data, n);
+      ctx->used += n; data += n; len -= n;
+      if (ctx->used == 64) { rommarch_md5_transform(ctx, ctx->block); ctx->used = 0; }
+   }
+}
+
+static void rommarch_md5_final(rommarch_md5_ctx_t *ctx, uint8_t out[16])
+{
+   uint64_t bits = ctx->total * 8;
+   unsigned i;
+   ctx->block[ctx->used++] = 0x80;
+   if (ctx->used > 56)
+   {
+      while (ctx->used < 64) ctx->block[ctx->used++] = 0;
+      rommarch_md5_transform(ctx, ctx->block); ctx->used = 0;
+   }
+   while (ctx->used < 56) ctx->block[ctx->used++] = 0;
+   for (i = 0; i < 8; i++) ctx->block[56+i] = (uint8_t)(bits >> (8*i));
+   rommarch_md5_transform(ctx, ctx->block);
+   for (i = 0; i < 4; i++)
+   {
+      out[i*4] = (uint8_t)ctx->h[i]; out[i*4+1] = (uint8_t)(ctx->h[i] >> 8);
+      out[i*4+2] = (uint8_t)(ctx->h[i] >> 16); out[i*4+3] = (uint8_t)(ctx->h[i] >> 24);
+   }
+}
+
+static bool rommarch_save_md5_file(const char *path, char out[33])
+{
+   RFILE *fp;
+   uint8_t buffer[4096], digest[16];
+   rommarch_md5_ctx_t ctx;
+   int64_t n;
+   unsigned i;
+   fp = filestream_open(path, RETRO_VFS_FILE_ACCESS_READ, RETRO_VFS_FILE_ACCESS_HINT_NONE);
+   if (!fp) return false;
+   rommarch_md5_init(&ctx);
+   while ((n = filestream_read(fp, buffer, sizeof(buffer))) > 0)
+      rommarch_md5_update(&ctx, buffer, (size_t)n);
+   filestream_close(fp);
+   if (n < 0) return false;
+   rommarch_md5_final(&ctx, digest);
+   for (i = 0; i < 16; i++) snprintf(out + i*2, 3, "%02x", digest[i]);
+   out[32] = '\0';
+   return true;
+}
+
+static void rommarch_basename_noext(char *out, size_t out_size, const char *path)
+{
+   const char *base = path_basename(path);
+   char *dot;
+   if (!out || !out_size) return;
+   strlcpy(out, base ? base : "", out_size);
+   dot = strrchr(out, '.');
+   if (dot && dot != out) *dot = '\0';
+}
+
+static bool rommarch_is_save_candidate(const char *path)
+{
+   const char *ext = path_get_extension(path);
+   if (!ext || !*ext) return true;
+   if (string_starts_with_size(ext, "state", STRLEN_CONST("state")) ||
+       string_is_equal_noncase(ext, "png") || string_is_equal_noncase(ext, "jpg") ||
+       string_is_equal_noncase(ext, "jpeg") || string_is_equal_noncase(ext, "bmp"))
+      return false;
+   return true;
+}
+
+static const rommarch_save_sync_rom_t *rommarch_save_find_rom(long rom_id)
+{
+   size_t i;
+   for (i = 0; i < g_rommarch_save_sync.rom_count; i++)
+      if (g_rommarch_save_sync.roms[i].rom_id == rom_id)
+         return &g_rommarch_save_sync.roms[i];
+   return NULL;
+}
+
+static const rommarch_save_sync_file_t *rommarch_save_find_file_by_rom(long rom_id)
+{
+   size_t i;
+   for (i = 0; i < g_rommarch_save_sync.file_count; i++)
+      if (g_rommarch_save_sync.files[i].rom_id == rom_id)
+         return &g_rommarch_save_sync.files[i];
+   return NULL;
+}
+
+static const rommarch_server_save_t *rommarch_save_find_server(long rom_id)
+{
+   size_t i;
+   const rommarch_server_save_t *best = NULL;
+
+   /* RomM is the chronology authority. When more than one eligible save is
+    * associated with a ROM, select the save with the newest server-issued
+    * updated_at value. ISO-8601 timestamps with a common representation sort
+    * lexicographically, so the 3DS clock is never consulted. Filenames are
+    * deliberately not used to infer which save is newer/authoritative. */
+   for (i = 0; i < g_rommarch_save_sync.server_save_count; i++)
+   {
+      const rommarch_server_save_t *candidate = &g_rommarch_save_sync.server_saves[i];
+      if (candidate->rom_id != rom_id || candidate->missing_from_fs)
+         continue;
+      if (!best ||
+          (*candidate->updated_at && !*best->updated_at) ||
+          (*candidate->updated_at && *best->updated_at &&
+           strcmp(candidate->updated_at, best->updated_at) > 0) ||
+          ((!*candidate->updated_at && !*best->updated_at) && candidate->save_id > best->save_id))
+         best = candidate;
+   }
+   return best;
+}
+
+static const char *rommarch_json_skip(const char *p, const char *end)
+{
+   while (p < end && (*p == ' ' || *p == '\t' || *p == '\r' || *p == '\n')) p++;
+   return p;
+}
+
+static const char *rommarch_json_key(const char *start, const char *end, const char *key)
+{
+   size_t n = strlen(key);
+   const char *p;
+   for (p = start; p + n + 2 <= end; p++)
+      if (*p == '"' && !memcmp(p + 1, key, n) && p[1 + n] == '"')
+         return p + n + 2;
+   return NULL;
+}
+
+static bool rommarch_json_long(const char *start, const char *end, const char *key, long *out)
+{
+   const char *p = rommarch_json_key(start, end, key);
+   char *after;
+   if (!p || !out) return false;
+   p = rommarch_json_skip(p, end);
+   if (p >= end || *p != ':') return false;
+   p = rommarch_json_skip(p + 1, end);
+   *out = strtol(p, &after, 10);
+   return after != p;
+}
+
+static bool rommarch_json_string_get(const char *start, const char *end, const char *key,
+      char *out, size_t out_size)
+{
+   const char *p = rommarch_json_key(start, end, key);
+   size_t n = 0;
+   if (!p || !out || !out_size) return false;
+   p = rommarch_json_skip(p, end);
+   if (p >= end || *p != ':') return false;
+   p = rommarch_json_skip(p + 1, end);
+   if (p >= end || *p != '"') return false;
+   p++;
+   while (p < end && *p != '"')
+   {
+      char c = *p++;
+      if (c == '\\' && p < end) c = *p++;
+      if (n + 1 < out_size) out[n++] = c;
+   }
+   out[n] = '\0';
+   return true;
+}
+
+static bool rommarch_json_next_object(const char **cursor, const char *end,
+      const char **obj_start, const char **obj_end)
+{
+   const char *p = *cursor;
+   int depth = 0;
+   bool in_string = false, escape = false;
+   while (p < end && *p != '{' && *p != ']') p++;
+   if (p >= end || *p == ']') { *cursor = p; return false; }
+   *obj_start = p; depth = 1; p++;
+   for (; p < end; p++)
+   {
+      char c = *p;
+      if (in_string)
+      {
+         if (escape) escape = false;
+         else if (c == '\\') escape = true;
+         else if (c == '"') in_string = false;
+         continue;
+      }
+      if (c == '"') in_string = true;
+      else if (c == '{') depth++;
+      else if (c == '}' && --depth == 0)
+      {
+         *obj_end = p + 1; *cursor = p + 1; return true;
+      }
+   }
+   *cursor = p; return false;
+}
+
+static void rommarch_save_sync_finish_message(const char *msg,
+      enum message_queue_category category)
+{
+   g_rommarch_save_sync.active = false;
+   free(g_rommarch_save_sync.request_body);
+   g_rommarch_save_sync.request_body = NULL;
+   if (msg && *msg)
+      runloop_msg_queue_push(msg, strlen(msg), 1, 360, true, NULL,
+            MESSAGE_QUEUE_ICON_DEFAULT, category);
+   menu_state_get_ptr()->flags |= MENU_ST_FLAG_ENTRIES_NEED_REFRESH;
+}
+
+static bool rommarch_save_add_local_files(long rom_id, long platform_id,
+      const char *rom_filename, const char *save_dir)
+{
+   struct string_list *list;
+   char rom_base[ROMM_LIBRARY_FILENAME_LENGTH];
+   size_t i;
+   if (!save_dir || !*save_dir || !path_is_directory(save_dir))
+      return false;
+   rommarch_basename_noext(rom_base, sizeof(rom_base), rom_filename);
+   list = dir_list_new(save_dir, NULL, false, false, false, false);
+   if (!list) return true;
+   for (i = 0; i < list->size && g_rommarch_save_sync.file_count < ROMMARCH_SAVE_SYNC_MAX_FILES; i++)
+   {
+      const char *candidate = list->elems[i].data;
+      char candidate_base[ROMM_LIBRARY_FILENAME_LENGTH];
+      rommarch_save_sync_file_t *f;
+      struct stat st;
+      if (!candidate || !*candidate || path_is_directory(candidate) || !rommarch_is_save_candidate(candidate))
+         continue;
+      rommarch_basename_noext(candidate_base, sizeof(candidate_base), candidate);
+      if (!string_is_equal_noncase(candidate_base, rom_base))
+         continue;
+      f = &g_rommarch_save_sync.files[g_rommarch_save_sync.file_count];
+      memset(f, 0, sizeof(*f));
+      f->rom_id = rom_id; f->platform_id = platform_id;
+      strlcpy(f->file, path_basename(candidate), sizeof(f->file));
+      strlcpy(f->path, candidate, sizeof(f->path));
+      if (stat(candidate, &st) != 0 || !rommarch_save_md5_file(candidate, f->content_hash))
+         continue;
+      f->file_size_bytes = (int64_t)st.st_size;
+      g_rommarch_save_sync.file_count++;
+      break; /* One canonical save per ROM. */
+   }
+   string_list_free(list);
+   return true;
+}
+
+static void rommarch_save_sync_request_rom_page(void);
+static void rommarch_save_sync_request_server_saves(void);
+static void rommarch_save_sync_execute_next(void);
+static void rommarch_save_sync_register_device(void);
+
+static void cb_rommarch_save_sync_roms(retro_task_t *task, void *task_data,
+      void *user_data, const char *err)
+{
+   http_transfer_data_t *data = (http_transfer_data_t*)task_data;
+   long platform_id;
+   char save_dir[PATH_MAX_LENGTH];
+   char roms_path[768];
+   romm_library_entry_t entries[ROMM_LIBRARY_PAGE_SIZE];
+   size_t n, i;
+   unsigned long total;
+
+   if (!g_rommarch_save_sync.active) return;
+   if (err || !data || data->status != 200 || !data->data)
+   {
+      char msg[128];
+      snprintf(msg, sizeof(msg), "RomMArch: Save sync ROM listing failed (HTTP %d)", data ? data->status : 0);
+      rommarch_save_sync_finish_message(msg, MESSAGE_QUEUE_CATEGORY_ERROR);
+      return;
+   }
+
+   platform_id = g_rommarch_save_sync.platforms[g_rommarch_save_sync.platform_index];
+   if (!romm_config_get_save_path(platform_id, save_dir, sizeof(save_dir)) || !path_is_directory(save_dir))
+   {
+      rommarch_save_sync_finish_message("RomMArch: Configured save directory is unavailable",
+            MESSAGE_QUEUE_CATEGORY_ERROR);
+      return;
+   }
+
+   if (!romm_config_get_roms_path(roms_path, sizeof(roms_path)) || !*roms_path)
+   {
+      rommarch_save_sync_finish_message("RomMArch: Local ROM directory is not configured",
+            MESSAGE_QUEUE_CATEGORY_ERROR);
+      return;
+   }
+
+   if (!romm_library_parse_response(data->data, data->len, platform_id,
+            g_rommarch_save_sync.page, roms_path))
+   {
+      rommarch_save_sync_finish_message("RomMArch: Could not parse ROM list for save sync",
+            MESSAGE_QUEUE_CATEGORY_ERROR);
+      return;
+   }
+   n = romm_library_get_entries(entries, ARRAY_SIZE(entries));
+   total = romm_library_get_total();
+   for (i = 0; i < n; i++)
+   {
+      rommarch_save_sync_rom_t *r;
+
+      /* Save synchronization only applies to ROMs that are actually present
+       * in RomMArch's configured local ROM directory.  This deliberately uses
+       * the same local_present result as the Rom Library [X] indicator. */
+      if (!entries[i].local_present)
+         continue;
+
+      if (g_rommarch_save_sync.rom_count >= ROMMARCH_SAVE_SYNC_MAX_ROMS)
+      {
+         rommarch_save_sync_finish_message("RomMArch: Save sync ROM limit reached (512)",
+               MESSAGE_QUEUE_CATEGORY_ERROR);
+         return;
+      }
+      r = &g_rommarch_save_sync.roms[g_rommarch_save_sync.rom_count++];
+      memset(r, 0, sizeof(*r));
+      r->rom_id = entries[i].rom_id; r->platform_id = platform_id;
+      strlcpy(r->rom_filename, entries[i].filename, sizeof(r->rom_filename));
+      strlcpy(r->save_dir, save_dir, sizeof(r->save_dir));
+      rommarch_save_add_local_files(r->rom_id, platform_id, r->rom_filename, save_dir);
+   }
+
+   if (((unsigned long)(g_rommarch_save_sync.page + 1) * ROMMARCH_SAVE_SYNC_PAGE_SIZE) < total)
+   {
+      g_rommarch_save_sync.page++;
+      rommarch_save_sync_request_rom_page();
+      return;
+   }
+
+   g_rommarch_save_sync.platform_index++;
+   g_rommarch_save_sync.page = 0;
+   if (g_rommarch_save_sync.platform_index < g_rommarch_save_sync.platform_count)
+      rommarch_save_sync_request_rom_page();
+   else
+   {
+      g_rommarch_save_sync.save_platform_index = 0;
+      rommarch_save_sync_request_server_saves();
+   }
+}
+
+static void rommarch_save_sync_request_rom_page(void)
+{
+   char suffix[512], url[1152];
+   long platform_id;
+   unsigned offset;
+   if (g_rommarch_save_sync.platform_index >= g_rommarch_save_sync.platform_count)
+   {
+      g_rommarch_save_sync.save_platform_index = 0;
+      rommarch_save_sync_request_server_saves();
+      return;
+   }
+   platform_id = g_rommarch_save_sync.platforms[g_rommarch_save_sync.platform_index];
+   offset = g_rommarch_save_sync.page * ROMMARCH_SAVE_SYNC_PAGE_SIZE;
+   rommarch_save_sync_progress_set(15);
+   snprintf(suffix, sizeof(suffix),
+         "/roms?platform_ids=%ld&limit=%u&offset=%u&order_by=name&order_dir=asc&with_char_index=false&with_filter_values=false&with_rom_id_index=false",
+         platform_id, ROMMARCH_SAVE_SYNC_PAGE_SIZE, offset);
+   rommarch_build_api_url(url, sizeof(url), g_rommarch_save_sync.server, suffix);
+   if (!task_push_http_transfer_with_headers(url, true, "GET", g_rommarch_save_sync.headers,
+            cb_rommarch_save_sync_roms, NULL))
+      rommarch_save_sync_finish_message("RomMArch: Unable to request ROMs for save sync",
+            MESSAGE_QUEUE_CATEGORY_ERROR);
+}
+
+static bool rommarch_save_parse_server_saves(const char *json, size_t len)
+{
+   const char *end = json + len;
+   const char *cur = json;
+   while (g_rommarch_save_sync.server_save_count < ROMMARCH_SAVE_SYNC_MAX_FILES)
+   {
+      const char *os, *oe;
+      rommarch_server_save_t tmp;
+      char slot[64], emulator[128];
+      if (!rommarch_json_next_object(&cur, end, &os, &oe)) break;
+      memset(&tmp, 0, sizeof(tmp));
+      slot[0] = emulator[0] = '\0';
+      if (!rommarch_json_long(os, oe, "id", &tmp.save_id) ||
+          !rommarch_json_long(os, oe, "rom_id", &tmp.rom_id) ||
+          !rommarch_json_string_get(os, oe, "file_name", tmp.file, sizeof(tmp.file)))
+         continue;
+      /* RomMArch canonical saves are deliberately slotless/emulatorless.
+       * Ignore RomM's timestamped named-slot history and emulator namespaces. */
+      if (rommarch_json_string_get(os, oe, "slot", slot, sizeof(slot)) && *slot)
+         continue;
+      if (rommarch_json_string_get(os, oe, "emulator", emulator, sizeof(emulator)) && *emulator)
+         continue;
+      rommarch_json_string_get(os, oe, "content_hash", tmp.content_hash, sizeof(tmp.content_hash));
+      rommarch_json_string_get(os, oe, "updated_at", tmp.updated_at, sizeof(tmp.updated_at));
+      rommarch_json_string_get(os, oe, "download_path", tmp.download_path, sizeof(tmp.download_path));
+      /* missing_from_fs is false for usable records. A literal true value is
+       * sufficient to exclude a stale database entry without trusting names. */
+      {
+         const char *mk = rommarch_json_key(os, oe, "missing_from_fs");
+         if (mk)
+         {
+            mk = rommarch_json_skip(mk, oe);
+            if (mk < oe && *mk == ':')
+            {
+               mk = rommarch_json_skip(mk + 1, oe);
+               tmp.missing_from_fs = (oe - mk >= 4 && !memcmp(mk, "true", 4));
+            }
+         }
+      }
+      g_rommarch_save_sync.server_saves[g_rommarch_save_sync.server_save_count++] = tmp;
+   }
+   return true;
+}
+
+static void rommarch_save_build_operations(void)
+{
+   size_t i;
+   g_rommarch_save_sync.op_count = 0;
+   g_rommarch_save_sync.transfer_count = 0;
+   for (i = 0; i < g_rommarch_save_sync.rom_count && g_rommarch_save_sync.op_count < ROMMARCH_SAVE_SYNC_MAX_OPS; i++)
+   {
+      const rommarch_save_sync_rom_t *r = &g_rommarch_save_sync.roms[i];
+      const rommarch_save_sync_file_t *local = rommarch_save_find_file_by_rom(r->rom_id);
+      const rommarch_server_save_t *server = rommarch_save_find_server(r->rom_id);
+      rommarch_save_sync_op_t *op;
+      char last_hash[65] = {0};
+      bool have_last = romm_config_get_save_sync_hash(r->rom_id, last_hash, sizeof(last_hash));
+      if (!local && !server) continue;
+      op = &g_rommarch_save_sync.ops[g_rommarch_save_sync.op_count++];
+      memset(op, 0, sizeof(*op));
+      op->rom_id = r->rom_id;
+      if (local) strlcpy(op->file, local->file, sizeof(op->file));
+      else if (server)
+      {
+         char base[ROMM_LIBRARY_FILENAME_LENGTH];
+         const char *ext = path_get_extension(server->file);
+         rommarch_basename_noext(base, sizeof(base), r->rom_filename);
+         if (ext && *ext) snprintf(op->file, sizeof(op->file), "%s.%s", base, ext);
+         else strlcpy(op->file, base, sizeof(op->file));
+      }
+      if (server)
+      {
+         op->save_id = server->save_id;
+         strlcpy(op->server_content_hash, server->content_hash, sizeof(op->server_content_hash));
+         strlcpy(op->server_updated_at, server->updated_at, sizeof(op->server_updated_at));
+         strlcpy(op->server_download_path, server->download_path, sizeof(op->server_download_path));
+      }
+      if (local) strlcpy(op->local_content_hash, local->content_hash, sizeof(op->local_content_hash));
+
+      if (local && !server)
+         op->type = ROMMARCH_SAVE_OP_UPLOAD;
+      else if (!local && server)
+         op->type = ROMMARCH_SAVE_OP_DOWNLOAD;
+      else if (!*local->content_hash || !*server->content_hash)
+         op->type = ROMMARCH_SAVE_OP_CONFLICT;
+      else if (string_is_equal_noncase(local->content_hash, server->content_hash))
+         op->type = ROMMARCH_SAVE_OP_NOOP;
+      else if (!have_last)
+         op->type = ROMMARCH_SAVE_OP_CONFLICT;
+      else if (string_is_equal_noncase(local->content_hash, last_hash) &&
+               !string_is_equal_noncase(server->content_hash, last_hash))
+         op->type = ROMMARCH_SAVE_OP_DOWNLOAD;
+      else if (!string_is_equal_noncase(local->content_hash, last_hash) &&
+               string_is_equal_noncase(server->content_hash, last_hash))
+         op->type = ROMMARCH_SAVE_OP_UPLOAD;
+      else
+         op->type = ROMMARCH_SAVE_OP_CONFLICT;
+
+      if (op->type == ROMMARCH_SAVE_OP_UPLOAD ||
+          op->type == ROMMARCH_SAVE_OP_DOWNLOAD)
+         g_rommarch_save_sync.transfer_count++;
+   }
+   g_rommarch_save_sync.op_index = 0;
+}
+
+static void cb_rommarch_save_sync_server_saves(retro_task_t *task, void *task_data,
+      void *user_data, const char *err)
+{
+   http_transfer_data_t *data = (http_transfer_data_t*)task_data;
+   if (err || !data || data->status != 200 || !data->data)
+   {
+      char msg[128];
+      snprintf(msg, sizeof(msg), "RomMArch: Save listing failed (HTTP %d)", data ? data->status : 0);
+      rommarch_save_sync_finish_message(msg, MESSAGE_QUEUE_CATEGORY_ERROR);
+      return;
+   }
+   rommarch_save_parse_server_saves(data->data, data->len);
+   g_rommarch_save_sync.save_platform_index++;
+   if (g_rommarch_save_sync.save_platform_index < g_rommarch_save_sync.platform_count)
+      rommarch_save_sync_request_server_saves();
+   else
+   {
+      rommarch_save_sync_progress_set(65);
+      rommarch_save_build_operations();
+      rommarch_save_sync_execute_next();
+   }
+}
+
+static void rommarch_save_sync_request_server_saves(void)
+{
+   char suffix[512], url[1152];
+   long platform_id;
+   if (g_rommarch_save_sync.save_platform_index >= g_rommarch_save_sync.platform_count)
+   {
+      rommarch_save_build_operations();
+      rommarch_save_sync_execute_next();
+      return;
+   }
+   platform_id = g_rommarch_save_sync.platforms[g_rommarch_save_sync.save_platform_index];
+   rommarch_save_sync_progress_set(45);
+   snprintf(suffix, sizeof(suffix), "/saves?platform_id=%ld&device_id=%s",
+         platform_id, g_rommarch_save_sync.device_id);
+   rommarch_build_api_url(url, sizeof(url), g_rommarch_save_sync.server, suffix);
+   if (!task_push_http_transfer_with_headers(url, true, "GET", g_rommarch_save_sync.headers,
+            cb_rommarch_save_sync_server_saves, NULL))
+      rommarch_save_sync_finish_message("RomMArch: Unable to request server saves",
+            MESSAGE_QUEUE_CATEGORY_ERROR);
+}
+
+static void rommarch_save_sync_finish_counts(void)
+{
+   char msg[256];
+   rommarch_save_sync_progress_set(99);
+   snprintf(msg, sizeof(msg),
+         "RomMArch: Save sync complete - %u pushed, %u pulled, %u unchanged, %u conflicts, %u failed",
+         g_rommarch_save_sync.uploaded, g_rommarch_save_sync.downloaded,
+         g_rommarch_save_sync.noops, g_rommarch_save_sync.conflicts,
+         g_rommarch_save_sync.failed);
+   rommarch_save_sync_finish_message(msg,
+         (g_rommarch_save_sync.conflicts || g_rommarch_save_sync.failed) ?
+         MESSAGE_QUEUE_CATEGORY_WARNING : MESSAGE_QUEUE_CATEGORY_INFO);
+}
+
+static void rommarch_save_sync_diagnostic(const char *detail, const rommarch_save_sync_op_t *op)
+{
+   char msg[384];
+   const rommarch_save_sync_rom_t *rom = op ? rommarch_save_find_rom(op->rom_id) : NULL;
+   char game[ROMM_LIBRARY_FILENAME_LENGTH];
+
+   game[0] = '\0';
+   if (rom && *rom->rom_filename)
+      rommarch_basename_noext(game, sizeof(game), rom->rom_filename);
+   else if (op && *op->file)
+      strlcpy(game, op->file, sizeof(game));
+   else
+      strlcpy(game, "Unknown save", sizeof(game));
+
+   snprintf(msg, sizeof(msg), "RomMArch: %s - %s", game, detail ? detail : "save sync failed");
+   runloop_msg_queue_push(msg, strlen(msg), 1, 600, true, NULL,
+         MESSAGE_QUEUE_ICON_DEFAULT, MESSAGE_QUEUE_CATEGORY_ERROR);
+}
+
+static void cb_rommarch_save_sync_transfer(retro_task_t *task, void *task_data,
+      void *user_data, const char *err)
+{
+   http_transfer_data_t *data = (http_transfer_data_t*)task_data;
+   rommarch_save_sync_op_t *op = NULL;
+   bool success = !err && data && data->status >= 200 && data->status < 300;
+   free(g_rommarch_save_sync.request_body);
+   g_rommarch_save_sync.request_body = NULL;
+   if (g_rommarch_save_sync.op_index < g_rommarch_save_sync.op_count)
+      op = &g_rommarch_save_sync.ops[g_rommarch_save_sync.op_index];
+   if (success && op)
+   {
+      char hash[65] = {0};
+      if (op->type == ROMMARCH_SAVE_OP_UPLOAD)
+      {
+         g_rommarch_save_sync.uploaded++;
+         strlcpy(hash, op->local_content_hash, sizeof(hash));
+      }
+      else if (op->type == ROMMARCH_SAVE_OP_DOWNLOAD)
+      {
+         /* Download to a temporary sibling first. This is not versioning:
+          * it prevents a failed transfer from destroying the live save. */
+         if (*g_rommarch_save_sync.current_target)
+         {
+            char old_path[PATH_MAX_LENGTH];
+            bool had_old = path_is_valid(g_rommarch_save_sync.current_target);
+            snprintf(old_path, sizeof(old_path), "%s.rommarch-old", g_rommarch_save_sync.current_target);
+            filestream_delete(old_path);
+            if (had_old && rename(g_rommarch_save_sync.current_target, old_path) != 0)
+            {
+               rommarch_save_sync_diagnostic("could not protect existing local save", op);
+               g_rommarch_save_sync.failed++;
+               success = false;
+            }
+            else if (rename(g_rommarch_save_sync.current_path, g_rommarch_save_sync.current_target) != 0)
+            {
+               if (had_old) rename(old_path, g_rommarch_save_sync.current_target);
+               rommarch_save_sync_diagnostic("could not install downloaded save", op);
+               g_rommarch_save_sync.failed++;
+               success = false;
+            }
+            else if (had_old)
+               filestream_delete(old_path);
+         }
+         if (success)
+         {
+            g_rommarch_save_sync.downloaded++;
+            if (*op->server_content_hash) strlcpy(hash, op->server_content_hash, sizeof(hash));
+            else if (*g_rommarch_save_sync.current_target)
+               rommarch_save_md5_file(g_rommarch_save_sync.current_target, hash);
+         }
+      }
+      if (success && *hash && !romm_config_set_save_sync_hash(op->rom_id, hash))
+      {
+         rommarch_save_sync_diagnostic("transfer succeeded but sync hash could not be stored", op);
+         g_rommarch_save_sync.failed++;
+      }
+      if (success)
+      {
+         long meta_id = op->save_id;
+         char meta_updated_at[64] = {0};
+
+         if (op->type == ROMMARCH_SAVE_OP_DOWNLOAD)
+            strlcpy(meta_updated_at, op->server_updated_at, sizeof(meta_updated_at));
+         else if (op->type == ROMMARCH_SAVE_OP_UPLOAD && data && data->data)
+         {
+            /* RomM commonly returns the updated save object from POST/PUT.
+             * Treat that response as server-authoritative metadata; if a
+             * particular RomM version omits it, the next server scan will
+             * still resolve chronology from RomM rather than the 3DS clock. */
+            long response_id = 0;
+            if (rommarch_json_long(data->data, data->data + data->len, "id", &response_id) && response_id > 0)
+               meta_id = response_id;
+            rommarch_json_string_get(data->data, data->data + data->len, "updated_at",
+                  meta_updated_at, sizeof(meta_updated_at));
+         }
+
+         if (meta_id > 0 && !romm_config_set_save_sync_server_meta(op->rom_id, meta_id, meta_updated_at))
+         {
+            rommarch_save_sync_diagnostic("transfer succeeded but server metadata could not be stored", op);
+            g_rommarch_save_sync.failed++;
+         }
+      }
+   }
+   else
+   {
+      char detail[128];
+      if (*g_rommarch_save_sync.current_path && op && op->type == ROMMARCH_SAVE_OP_DOWNLOAD)
+         filestream_delete(g_rommarch_save_sync.current_path);
+      if (data)
+         snprintf(detail, sizeof(detail), "transfer failed (HTTP %d)", data->status);
+      else if (err && *err)
+         snprintf(detail, sizeof(detail), "transfer failed: %.88s", err);
+      else
+         strlcpy(detail, "transfer could not be completed", sizeof(detail));
+      rommarch_save_sync_diagnostic(detail, op);
+      g_rommarch_save_sync.failed++;
+   }
+   g_rommarch_save_sync.current_path[0] = '\0';
+   g_rommarch_save_sync.current_target[0] = '\0';
+   g_rommarch_save_sync.op_index++;
+   if (g_rommarch_save_sync.transfer_count)
+   {
+      unsigned completed = g_rommarch_save_sync.uploaded + g_rommarch_save_sync.downloaded + g_rommarch_save_sync.failed;
+      rommarch_save_sync_progress_set(70 + (unsigned)(25 * completed / g_rommarch_save_sync.transfer_count));
+   }
+   rommarch_save_sync_execute_next();
+}
+
+static void rommarch_save_sync_conflict_choice(unsigned choice)
+{
+   rommarch_save_sync_op_t *op;
+
+   if (!g_rommarch_save_sync.active ||
+       g_rommarch_save_sync.op_index >= g_rommarch_save_sync.op_count)
+      return;
+
+   op = &g_rommarch_save_sync.ops[g_rommarch_save_sync.op_index];
+   if (op->type != ROMMARCH_SAVE_OP_CONFLICT)
+      return;
+
+   if (choice == 1)
+   {
+      /* User explicitly chose the 3DS copy as authoritative. */
+      op->type = ROMMARCH_SAVE_OP_UPLOAD;
+      g_rommarch_save_sync.transfer_count++;
+   }
+   else if (choice == 2)
+   {
+      /* User explicitly chose the RomM copy as authoritative. */
+      op->type = ROMMARCH_SAVE_OP_DOWNLOAD;
+      g_rommarch_save_sync.transfer_count++;
+   }
+   else
+   {
+      /* Cancel is non-destructive and leaves the remembered baseline intact. */
+      g_rommarch_save_sync.conflicts++;
+      g_rommarch_save_sync.op_index++;
+   }
+
+   rommarch_save_sync_execute_next();
+}
+
+static void rommarch_save_sync_execute_next(void)
+{
+   while (g_rommarch_save_sync.op_index < g_rommarch_save_sync.op_count)
+   {
+      rommarch_save_sync_op_t *op = &g_rommarch_save_sync.ops[g_rommarch_save_sync.op_index];
+      if (op->type == ROMMARCH_SAVE_OP_NOOP)
+      {
+         if (*op->local_content_hash)
+            romm_config_set_save_sync_hash(op->rom_id, op->local_content_hash);
+         g_rommarch_save_sync.noops++;
+         g_rommarch_save_sync.op_index++;
+         continue;
+      }
+      if (op->type == ROMMARCH_SAVE_OP_CONFLICT)
+      {
+         const rommarch_save_sync_rom_t *rom = rommarch_save_find_rom(op->rom_id);
+         char game[ROMM_LIBRARY_FILENAME_LENGTH];
+         char msg[256];
+
+         if (rom && *rom->rom_filename)
+            rommarch_basename_noext(game, sizeof(game), rom->rom_filename);
+         else
+            strlcpy(game, op->file, sizeof(game));
+
+         snprintf(msg, sizeof(msg),
+               "Save Conflict\n\n%s\n\nBoth the 3DS and RomM saves have changed since the last sync.",
+               game);
+         menu_dialog_confirm_set_choices(menu_state_get_ptr(), msg,
+               "Cancel", "Use 3DS Save", "Use RomM Save", 0,
+               rommarch_save_sync_conflict_choice);
+         return;
+      }
+      if (op->type == ROMMARCH_SAVE_OP_DOWNLOAD)
+      {
+         const rommarch_save_sync_rom_t *rom = rommarch_save_find_rom(op->rom_id);
+         char suffix[512], url[1152], local_name[ROMM_LIBRARY_FILENAME_LENGTH];
+         const char *ext;
+         char base[ROMM_LIBRARY_FILENAME_LENGTH];
+         if (!rom || op->save_id <= 0)
+         {
+            g_rommarch_save_sync.failed++; g_rommarch_save_sync.op_index++; continue;
+         }
+         rommarch_basename_noext(base, sizeof(base), rom->rom_filename);
+         ext = path_get_extension(op->file);
+         if (ext && *ext) snprintf(local_name, sizeof(local_name), "%s.%s", base, ext);
+         else strlcpy(local_name, op->file, sizeof(local_name));
+         strlcpy(g_rommarch_save_sync.current_target, rom->save_dir, sizeof(g_rommarch_save_sync.current_target));
+         fill_pathname_join(g_rommarch_save_sync.current_target, g_rommarch_save_sync.current_target,
+               local_name, sizeof(g_rommarch_save_sync.current_target));
+         snprintf(g_rommarch_save_sync.current_path, sizeof(g_rommarch_save_sync.current_path),
+               "%s.rommarch-download", g_rommarch_save_sync.current_target);
+         filestream_delete(g_rommarch_save_sync.current_path);
+         /* Use the selected save ID with the content endpoint already proven on
+          * hardware. download_path remains server metadata only; its timestamp
+          * query is not part of RomMArch's device-aware pull request. */
+         snprintf(suffix, sizeof(suffix), "/saves/%ld/content?device_id=%s&optimistic=true",
+               op->save_id, g_rommarch_save_sync.device_id);
+         rommarch_build_api_url(url, sizeof(url), g_rommarch_save_sync.server, suffix);
+         {
+            size_t j, transfer_index = 0;
+            for (j = 0; j <= g_rommarch_save_sync.op_index; j++)
+               if (g_rommarch_save_sync.ops[j].type == ROMMARCH_SAVE_OP_UPLOAD ||
+                   g_rommarch_save_sync.ops[j].type == ROMMARCH_SAVE_OP_DOWNLOAD)
+                  transfer_index++;
+            rommarch_save_sync_progress_set(g_rommarch_save_sync.transfer_count ?
+                  70 + (unsigned)(25 * (transfer_index - 1) / g_rommarch_save_sync.transfer_count) : 70);
+         }
+         if (!task_push_http_download_file_with_headers(url, g_rommarch_save_sync.current_path,
+                  false, "RomMArch: Pulling save", g_rommarch_save_sync.headers,
+                  cb_rommarch_save_sync_transfer, NULL))
+         {
+            rommarch_save_sync_diagnostic("download task could not be started", op);
+            g_rommarch_save_sync.failed++;
+            g_rommarch_save_sync.current_path[0] = '\0';
+            g_rommarch_save_sync.current_target[0] = '\0';
+            g_rommarch_save_sync.op_index++;
+            continue;
+         }
+         return;
+      }
+      if (op->type == ROMMARCH_SAVE_OP_UPLOAD)
+      {
+         const rommarch_save_sync_file_t *f = rommarch_save_find_file_by_rom(op->rom_id);
+         void *file_data = NULL, *body = NULL;
+         int64_t file_len = 0;
+         size_t prefix_len, suffix_len, body_len;
+         char boundary[64], prefix[1024], ending[96], content_type[128], url[1536];
+         if (!f || filestream_read_file(f->path, &file_data, &file_len) <= 0 || !file_data || file_len < 0)
+         {
+            free(file_data);
+            g_rommarch_save_sync.failed++; g_rommarch_save_sync.op_index++; continue;
+         }
+         snprintf(boundary, sizeof(boundary), "----RomMArch3DS%ld%u", op->rom_id, (unsigned)g_rommarch_save_sync.op_index);
+         snprintf(prefix, sizeof(prefix),
+               "--%s\r\nContent-Disposition: form-data; name=\"saveFile\"; filename=\"%s\"\r\nContent-Type: application/octet-stream\r\n\r\n",
+               boundary, f->file);
+         snprintf(ending, sizeof(ending), "\r\n--%s--\r\n", boundary);
+         prefix_len = strlen(prefix); suffix_len = strlen(ending);
+         body_len = prefix_len + (size_t)file_len + suffix_len;
+         body = malloc(body_len);
+         if (!body)
+         {
+            free(file_data); g_rommarch_save_sync.failed++; g_rommarch_save_sync.op_index++; continue;
+         }
+         memcpy(body, prefix, prefix_len);
+         memcpy((uint8_t*)body + prefix_len, file_data, (size_t)file_len);
+         memcpy((uint8_t*)body + prefix_len + (size_t)file_len, ending, suffix_len);
+         free(file_data);
+         snprintf(content_type, sizeof(content_type), "multipart/form-data; boundary=%s", boundary);
+         {
+            char suffix[768];
+            if (op->save_id > 0)
+               snprintf(suffix, sizeof(suffix), "/saves/%ld?device_id=%s", op->save_id, g_rommarch_save_sync.device_id);
+            else
+               snprintf(suffix, sizeof(suffix), "/saves?rom_id=%ld&device_id=%s&overwrite=true",
+                     op->rom_id, g_rommarch_save_sync.device_id);
+            rommarch_build_api_url(url, sizeof(url), g_rommarch_save_sync.server, suffix);
+         }
+         {
+            size_t j, transfer_index = 0;
+            for (j = 0; j <= g_rommarch_save_sync.op_index; j++)
+               if (g_rommarch_save_sync.ops[j].type == ROMMARCH_SAVE_OP_UPLOAD ||
+                   g_rommarch_save_sync.ops[j].type == ROMMARCH_SAVE_OP_DOWNLOAD)
+                  transfer_index++;
+            rommarch_save_sync_progress_set(g_rommarch_save_sync.transfer_count ?
+                  70 + (unsigned)(25 * (transfer_index - 1) / g_rommarch_save_sync.transfer_count) : 70);
+         }
+         g_rommarch_save_sync.request_body = body;
+         if (!task_push_http_transfer_with_content(url, op->save_id > 0 ? "PUT" : "POST", body, body_len,
+                  content_type, true, false, g_rommarch_save_sync.headers,
+                  cb_rommarch_save_sync_transfer, NULL))
+         {
+            free(body); g_rommarch_save_sync.request_body = NULL;
+            g_rommarch_save_sync.failed++; g_rommarch_save_sync.op_index++; continue;
+         }
+         return;
+      }
+   }
+   rommarch_save_sync_finish_counts();
+}
+
+static void cb_rommarch_save_sync_register(retro_task_t *task, void *task_data,
+      void *user_data, const char *err)
+{
+   http_transfer_data_t *data = (http_transfer_data_t*)task_data;
+   char id[64] = {0};
+   long numeric_id = 0;
+   bool have_id = false;
+   if (!err && data && (data->status == 200 || data->status == 201) && data->data)
+   {
+      have_id = rommarch_json_string_get(data->data, data->data + data->len, "device_id", id, sizeof(id));
+      if (!have_id) have_id = rommarch_json_string_get(data->data, data->data + data->len, "id", id, sizeof(id));
+      if (!have_id && rommarch_json_long(data->data, data->data + data->len, "device_id", &numeric_id) && numeric_id > 0)
+      { snprintf(id, sizeof(id), "%ld", numeric_id); have_id = true; }
+      if (!have_id && rommarch_json_long(data->data, data->data + data->len, "id", &numeric_id) && numeric_id > 0)
+      { snprintf(id, sizeof(id), "%ld", numeric_id); have_id = true; }
+   }
+   if (!have_id || !*id)
+   {
+      char msg[128];
+      snprintf(msg, sizeof(msg), "RomMArch: Device registration failed (HTTP %d)", data ? data->status : 0);
+      rommarch_save_sync_finish_message(msg, MESSAGE_QUEUE_CATEGORY_ERROR);
+      return;
+   }
+   strlcpy(g_rommarch_save_sync.device_id, id, sizeof(g_rommarch_save_sync.device_id));
+   romm_config_set_device_id(id);
+   rommarch_save_sync_request_rom_page();
+}
+
+static void rommarch_save_sync_register_device(void)
+{
+   char url[1152];
+   const char *body = "{\"name\":\"RomMArch Nintendo 3DS\",\"platform\":\"retroarch-3ds\",\"hostname\":\"nintendo-3ds\",\"sync_mode\":\"push_pull\",\"paths\":{\"roms\":\"sdmc:/retroarch/downloads\",\"saves\":\"per-platform\",\"states\":\"disabled\"}}";
+   rommarch_build_api_url(url, sizeof(url), g_rommarch_save_sync.server, "/devices");
+   if (!task_push_http_transfer_with_content(url, "POST", body, strlen(body),
+            "application/json", true, false, g_rommarch_save_sync.headers,
+            cb_rommarch_save_sync_register, NULL))
+      rommarch_save_sync_finish_message("RomMArch: Unable to register device",
+            MESSAGE_QUEUE_CATEGORY_ERROR);
+}
+
+#endif
+
+static int action_ok_romm_save_synchronize(const char *path,
+      const char *label, unsigned type, size_t idx, size_t entry_idx)
+{
+#ifdef HAVE_NETWORKING
+   romm_platform_entry_t platforms[ROMM_LIBRARY_MAX_PLATFORMS];
+   size_t count, i;
+   char token[768];
+
+   if (g_rommarch_save_sync.active)
+   {
+      const char *busy = "RomMArch: Save synchronization is already running";
+      runloop_msg_queue_push(busy, strlen(busy), 1, 180, true, NULL,
+            MESSAGE_QUEUE_ICON_DEFAULT, MESSAGE_QUEUE_CATEGORY_WARNING);
+      return 0;
+   }
+
+   memset(&g_rommarch_save_sync, 0, sizeof(g_rommarch_save_sync));
+   if (!rommarch_get_auth(g_rommarch_save_sync.server, sizeof(g_rommarch_save_sync.server),
+            token, sizeof(token), g_rommarch_save_sync.headers, sizeof(g_rommarch_save_sync.headers)))
+      return 0;
+
+   count = romm_library_get_platforms(platforms, ARRAY_SIZE(platforms));
+   for (i = 0; i < count && g_rommarch_save_sync.platform_count < ARRAY_SIZE(g_rommarch_save_sync.platforms); i++)
+      if (romm_config_save_ready(platforms[i].platform_id))
+         g_rommarch_save_sync.platforms[g_rommarch_save_sync.platform_count++] = platforms[i].platform_id;
+
+   if (!g_rommarch_save_sync.platform_count)
+   {
+      const char *none = "RomMArch: Configure at least one core save directory first";
+      runloop_msg_queue_push(none, strlen(none), 1, 240, true, NULL,
+            MESSAGE_QUEUE_ICON_DEFAULT, MESSAGE_QUEUE_CATEGORY_ERROR);
+      return 0;
+   }
+
+   g_rommarch_save_sync.active = true;
+   rommarch_save_sync_progress_set(5);
+   rommarch_save_sync_progress_start();
+
+   if (romm_config_get_device_id(g_rommarch_save_sync.device_id, sizeof(g_rommarch_save_sync.device_id)) &&
+       *g_rommarch_save_sync.device_id)
+      rommarch_save_sync_request_rom_page();
+   else
+      rommarch_save_sync_register_device();
+   return 0;
+#else
+   return -1;
+#endif
+}
+
+static int action_ok_romm_platform(const char *path,
+      const char *label, unsigned type, size_t idx, size_t entry_idx)
+{
+#ifdef HAVE_NETWORKING
+   long platform_id = label ? strtol(label, NULL, 10) : 0;
+   if (platform_id <= 0)
+      return -1;
+
+   rommarch_roms_request(platform_id, 0);
+   return generic_action_ok_displaylist_push(path, NULL,
+         msg_hash_to_str(MENU_ENUM_LABEL_ROMM_PLATFORM_ROMS), type,
+         idx, entry_idx, ACTION_OK_DL_ROMM_PLATFORM_ROMS);
+#else
+   return -1;
+#endif
+}
+
+static int action_ok_romm_rom_toggle(const char *path,
+      const char *label, unsigned type, size_t idx, size_t entry_idx)
+{
+   long rom_id = label ? strtol(label, NULL, 10) : 0;
+   romm_library_entry_t *entry = romm_library_find_entry(rom_id);
+   struct menu_state *menu_st = menu_state_get_ptr();
+
+   if (!entry)
+      return -1;
+
+   if (entry->local_present)
+   {
+      char roms_path[768];
+      if (!romm_config_get_roms_path(roms_path, sizeof(roms_path)) || !*roms_path)
+         return -1;
+      if (!romm_library_prepare_delete(rom_id, roms_path))
+         return -1;
+
+      menu_dialog_confirm_set_text(menu_st,
+            "This ROM is already synchronized. Do you want to delete it from this device?",
+            CMD_EVENT_ROMMARCH_DELETE_ROM_CONFIRM);
+      return 0;
+   }
+
+   if (romm_library_pending_contains(rom_id))
+   {
+      romm_library_pending_remove(rom_id);
+      entry->selected = false;
+   }
+   else
+   {
+      if (!romm_library_pending_add(entry))
+         return -1;
+      entry->selected = true;
+   }
+
+   menu_st->flags |= MENU_ST_FLAG_ENTRIES_NEED_REFRESH;
+   return 0;
+}
+
+static int action_ok_romm_page_prev(const char *path,
+      const char *label, unsigned type, size_t idx, size_t entry_idx)
+{
+#ifdef HAVE_NETWORKING
+   unsigned page = romm_library_get_page();
+   long platform_id = romm_library_get_platform_id();
+   if (platform_id <= 0 || page == 0)
+      return -1;
+   rommarch_roms_request(platform_id, page - 1);
+   menu_state_get_ptr()->flags |= MENU_ST_FLAG_ENTRIES_NEED_REFRESH;
+   return 0;
+#else
+   return -1;
+#endif
+}
+
+static int action_ok_romm_page_next(const char *path,
+      const char *label, unsigned type, size_t idx, size_t entry_idx)
+{
+#ifdef HAVE_NETWORKING
+   unsigned page = romm_library_get_page();
+   long platform_id = romm_library_get_platform_id();
+   if (platform_id <= 0 || !romm_library_has_next())
+      return -1;
+   rommarch_roms_request(platform_id, page + 1);
+   menu_state_get_ptr()->flags |= MENU_ST_FLAG_ENTRIES_NEED_REFRESH;
+   return 0;
+#else
+   return -1;
+#endif
+}
+
 static int menu_cbs_init_bind_ok_compare_type(menu_file_list_cbs_t *cbs,
       const char *label, const char *menu_label, unsigned type)
 {
-   if (type == MENU_SET_CDROM_LIST)
+   if (type == MENU_SETTING_ACTION_ROMM_SYNC_TOGGLE)
+   {
+      BIND_ACTION_OK(cbs, action_ok_romm_sync_toggle);
+   }
+   else if (type == MENU_SETTING_ACTION_ROMM_PLATFORM)
+   {
+      BIND_ACTION_OK(cbs, action_ok_romm_platform);
+   }
+   else if (type == MENU_SETTING_ACTION_ROMM_ROM_TOGGLE)
+   {
+      BIND_ACTION_OK(cbs, action_ok_romm_rom_toggle);
+   }
+   else if (type == MENU_SETTING_ACTION_ROMM_PAGE_PREV)
+   {
+      BIND_ACTION_OK(cbs, action_ok_romm_page_prev);
+   }
+   else if (type == MENU_SETTING_ACTION_ROMM_PAGE_NEXT)
+   {
+      BIND_ACTION_OK(cbs, action_ok_romm_page_next);
+   }
+   else if (type == MENU_SETTING_ACTION_ROMM_SYNCHRONIZE)
+   {
+#ifdef HAVE_NETWORKING
+      BIND_ACTION_OK(cbs, action_ok_romm_synchronize);
+#endif
+   }
+   else if (type == MENU_SETTING_ACTION_ROMM_SAVE_PLATFORM)
+      BIND_ACTION_OK(cbs, action_ok_romm_save_platform);
+   else if (type == MENU_SETTING_ACTION_ROMM_SAVE_ENABLE)
+      BIND_ACTION_OK(cbs, action_ok_romm_save_enable);
+   else if (type == MENU_SETTING_ACTION_ROMM_SAVE_PATH)
+      BIND_ACTION_OK(cbs, action_ok_romm_save_path);
+   else if (type == MENU_SETTING_ACTION_ROMM_SAVE_SYNCHRONIZE)
+      BIND_ACTION_OK(cbs, action_ok_romm_save_synchronize);
+   else if (type == MENU_SET_CDROM_LIST)
    {
       BIND_ACTION_OK(cbs, action_ok_dump_cdrom);
    }
@@ -9949,6 +11992,16 @@ static int menu_cbs_init_bind_ok_compare_type(menu_file_list_cbs_t *cbs,
             BIND_ACTION_OK(cbs, action_ok_menu_wallpaper_load);
             break;
          case FILE_TYPE_USE_DIRECTORY:
+            {
+               menu_handle_t *rommarch_menu = menu_state_get_ptr()->driver_data;
+               if (rommarch_menu && (
+                        string_is_equal(rommarch_menu->filebrowser_label, ROMMARCH_ROM_DIR_BROWSER_LABEL) ||
+                        string_is_equal(rommarch_menu->filebrowser_label, ROMMARCH_SAVE_DIR_BROWSER_LABEL)))
+               {
+                  BIND_ACTION_OK(cbs, action_ok_rommarch_use_directory);
+                  break;
+               }
+            }
             if (     cbs->enum_idx == MSG_UNKNOWN
                   && string_is_equal(menu_label, MENU_ENUM_LABEL_FAVORITES_STR))
                BIND_ACTION_OK(cbs, action_ok_file_load_with_detect_core);

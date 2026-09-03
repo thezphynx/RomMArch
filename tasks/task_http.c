@@ -774,3 +774,22 @@ void *task_push_http_download_file(const char *url, const char *path,
          net_http_connection_new(url, "GET", NULL),
          url, mute, false, title, path, cb, user_data);
 }
+
+void *task_push_http_download_file_with_headers(const char *url,
+      const char *path, bool mute, const char *title, const char *headers,
+      retro_task_callback_t cb, void *user_data)
+{
+   struct http_connection_t *conn;
+
+   if (!url || !*url || !path || !*path)
+      return NULL;
+
+   if (!(conn = net_http_connection_new(url, "GET", NULL)))
+      return NULL;
+
+   if (headers && *headers)
+      net_http_connection_set_headers(conn, headers);
+
+   return task_push_http_transfer_generic_titled(
+         conn, url, mute, false, title, path, cb, user_data);
+}
