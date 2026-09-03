@@ -43,7 +43,7 @@ jobs:
             build-essential zlib1g-dev clang
 
       - name: Checkout
-        uses: actions/checkout@v3
+        uses: actions/checkout@v7
 
       - name: Build and run samples
         shell: bash
@@ -493,7 +493,7 @@ jobs:
             clang
 
       - name: Checkout
-        uses: actions/checkout@v3
+        uses: actions/checkout@v7
 
       - name: Build fuzz target
         shell: bash
@@ -572,7 +572,7 @@ jobs:
             build-essential ${{ matrix.apt_pkgs }} qemu-user-static
 
       - name: Checkout
-        uses: actions/checkout@v3
+        uses: actions/checkout@v7
 
       - name: Build retro_atomic_test for ${{ matrix.arch }}
         working-directory: libretro-common/samples/atomic/retro_atomic_test
@@ -689,7 +689,7 @@ jobs:
             build-essential ${{ matrix.apt_pkgs }} qemu-user-static
 
       - name: Checkout
-        uses: actions/checkout@v3
+        uses: actions/checkout@v7
 
       - name: Build crc32_test for ${{ matrix.name }}
         working-directory: libretro-common/samples/encodings/crc32

@@ -58,7 +58,7 @@ jobs:
           # contributor's local run is not blocked.
 
       - name: Checkout
-        uses: actions/checkout@v3
+        uses: actions/checkout@v7
 
       - name: Build and run the unit test suites
         shell: bash

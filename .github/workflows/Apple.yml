@@ -54,7 +54,7 @@ jobs:
     runs-on: macos-latest
 
     steps:
-    - uses: actions/checkout@v6
+    - uses: actions/checkout@v7
 
     # Source-level checks. These need no toolchain and give a precise
     # message when the wiring, rather than the code, is what broke.
@@ -131,7 +131,7 @@ jobs:
     continue-on-error: true
 
     steps:
-    - uses: actions/checkout@v6
+    - uses: actions/checkout@v7
 
     - name: Compile RA (tvOS)
       run: |
