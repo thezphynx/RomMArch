@@ -90,24 +90,25 @@ bash package-rommarch.sh
 Packaging requires curl, sha256sum, and 7-Zip. On Windows, the script
 also checks the standard `C:\Program Files\7-Zip\7z.exe` location.
 
-The script automatically downloads the RetroArch 1.15.0 Nintendo 3DS
+The script automatically downloads the RetroArch 1.17.0 Nintendo 3DS
 CIA distribution, verifies its pinned SHA-256 checksum, and combines
 its supporting folders and prebuilt cores with the compiled RomMArch
-frontend. No manual download or selection of older cores is required.
+frontend. No manual download or selection of cores is required.
 
 The completed package is written to a fresh
 `RomMArch-package.XXXXXX` folder in your home directory. It includes
 installation instructions and the supporting archive's source URL
 and checksum.
 
-### Why older cores are included
+### Core compatibility baseline
 
 RomMArch intentionally packages Nintendo 3DS emulator cores and
-supporting files from RetroArch 1.15.0. Newer core builds tested by
+supporting files from RetroArch 1.17.0. Later core builds tested by
 the maintainer exhibited touchscreen crashes that remain unresolved
-in this project. The older versions preserve the tested working setup.
+in this project. RetroArch 1.17.0 remains the supported baseline until a newer version is
+explicitly validated.
 
-Not every bundled core has been individually tested. The older core
+Not every bundled core has been individually tested. The bundled core
 executables retain their original RetroArch frontend; the RomMArch
 submenu belongs to the separately built frontend.
 

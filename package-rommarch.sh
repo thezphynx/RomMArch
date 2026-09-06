@@ -2,8 +2,8 @@
 set -euo pipefail
 
 repo_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-archive_url="https://buildbot.libretro.com/stable/1.15.0/nintendo/3ds/RetroArch_cia.7z"
-archive_sha256="181ff3c67318da1d6abf8333c104dafe0a62b34bf3a9a17144568cedd9f02cd9"
+archive_url="https://buildbot.libretro.com/stable/1.17.0/nintendo/3ds/RetroArch_cia.7z"
+archive_sha256="eba3fd09c5cb5698e38db73dccbeab7ccc683bed27ede80a43fb1ed91e49e3c8"
 
 if [[ $# -ne 0 ]]; then
     printf 'Usage: bash package-rommarch.sh\n' >&2
@@ -44,7 +44,7 @@ done
 work_dir="$(mktemp -d "$HOME/RomMArch-download.XXXXXX")"
 trap 'rm -rf -- "$work_dir"' EXIT
 
-printf 'Downloading compatible RetroArch 1.15.0 CIA distribution...\n'
+printf 'Downloading compatible RetroArch 1.17.0 CIA distribution...\n'
 curl --fail --location --retry 3 \
     --output "$work_dir/RetroArch_cia.7z" "$archive_url"
 
@@ -90,14 +90,15 @@ The retroarch_3ds.3dsx file is an alternative frontend launch format.
 It is not required for the CIA installation.
 
 CORE COMPATIBILITY
-RomMArch intentionally packages older Nintendo 3DS emulator cores
-and supporting files from the RetroArch 1.15.0 CIA distribution.
-Newer core builds tested by the maintainer exhibited touchscreen
-crashes that remain unresolved in this project. The older versions
-are included deliberately to preserve the tested working setup.
+RomMArch packages Nintendo 3DS emulator cores
+and supporting files from the RetroArch 1.17.0 CIA distribution.
+Later core builds tested by the maintainer exhibited touchscreen
+crashes that remain unresolved in this project. RetroArch 1.17.0
+remains the supported baseline until a newer version is
+explicitly validated.
 
 Not every bundled core has been individually tested.
-The older core executables retain their original RetroArch frontend;
+The bundled core executables retain their original RetroArch frontend;
 the RomMArch submenu belongs to the separately built frontend.
 
 On an existing installation, back up your files before copying.
