@@ -76,7 +76,7 @@ cp "$repo_dir/retroarch_3ds.cia" "$repo_dir/retroarch_3ds.3dsx" "$package_dir/"
 cp "$repo_dir/COPYING" "$package_dir/"
 
 cat > "$package_dir/INSTALL.txt" <<'NOTES'
-RomMArch — Nintendo 3DS CIA package
+RomMArch 3DS — Nintendo 3DS CIA package
 
 INSTALLATION
 1. Copy the supplied retroarch folder to the SD card root:

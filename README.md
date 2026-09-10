@@ -1,4 +1,4 @@
-# RomMArch
+# RomMArch 3DS
 
 A Nintendo 3DS-focused modification of RetroArch that adds RomM server
 integration for ROM library browsing, downloads, and save synchronization.

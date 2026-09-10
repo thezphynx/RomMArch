@@ -10814,6 +10814,31 @@ static const rommarch_server_save_t *rommarch_save_find_server(long rom_id)
    return best;
 }
 
+/* Upload destination selection is deliberately separate from chronology.
+ * Pull/conflict decisions use rommarch_save_find_server(), which chooses the
+ * newest remote save. When pushing local data, however, only an existing
+ * server save with the exact canonical local filename may be overwritten.
+ * Timestamped/history saves are never valid normal-upload destinations. */
+static const rommarch_server_save_t *rommarch_save_find_canonical_upload_target(
+      long rom_id, const char *canonical_file)
+{
+   size_t i;
+
+   if (!canonical_file || !*canonical_file)
+      return NULL;
+
+   for (i = 0; i < g_rommarch_save_sync.server_save_count; i++)
+   {
+      const rommarch_server_save_t *candidate = &g_rommarch_save_sync.server_saves[i];
+      if (candidate->rom_id != rom_id || candidate->missing_from_fs)
+         continue;
+      if (string_is_equal_noncase(candidate->file, canonical_file))
+         return candidate;
+   }
+
+   return NULL;
+}
+
 static const char *rommarch_json_skip(const char *p, const char *end)
 {
    while (p < end && (*p == ' ' || *p == '\t' || *p == '\r' || *p == '\n')) p++;
@@ -11464,6 +11489,8 @@ static void rommarch_save_sync_execute_next(void)
       if (op->type == ROMMARCH_SAVE_OP_UPLOAD)
       {
          const rommarch_save_sync_file_t *f = rommarch_save_find_file_by_rom(op->rom_id);
+         const rommarch_server_save_t *upload_target = NULL;
+         long upload_save_id = 0;
          void *file_data = NULL, *body = NULL;
          int64_t file_len = 0;
          size_t prefix_len, suffix_len, body_len;
@@ -11492,8 +11519,20 @@ static void rommarch_save_sync_execute_next(void)
          snprintf(content_type, sizeof(content_type), "multipart/form-data; boundary=%s", boundary);
          {
             char suffix[768];
-            if (op->save_id > 0)
-               snprintf(suffix, sizeof(suffix), "/saves/%ld?device_id=%s", op->save_id, g_rommarch_save_sync.device_id);
+
+            /* The newest remote save remains the chronology authority for the
+             * sync decision, but it is not necessarily a safe upload target.
+             * Only overwrite the canonical server filename matching the local
+             * save. If none exists, create a canonical save instead of
+             * mutating a timestamped/history save. */
+            upload_target = rommarch_save_find_canonical_upload_target(
+                  op->rom_id, f->file);
+            if (upload_target)
+               upload_save_id = upload_target->save_id;
+
+            if (upload_save_id > 0)
+               snprintf(suffix, sizeof(suffix), "/saves/%ld?device_id=%s",
+                     upload_save_id, g_rommarch_save_sync.device_id);
             else
                snprintf(suffix, sizeof(suffix), "/saves?rom_id=%ld&device_id=%s&overwrite=true",
                      op->rom_id, g_rommarch_save_sync.device_id);
@@ -11509,7 +11548,7 @@ static void rommarch_save_sync_execute_next(void)
                   70 + (unsigned)(25 * (transfer_index - 1) / g_rommarch_save_sync.transfer_count) : 70);
          }
          g_rommarch_save_sync.request_body = body;
-         if (!task_push_http_transfer_with_content(url, op->save_id > 0 ? "PUT" : "POST", body, body_len,
+         if (!task_push_http_transfer_with_content(url, upload_save_id > 0 ? "PUT" : "POST", body, body_len,
                   content_type, true, false, g_rommarch_save_sync.headers,
                   cb_rommarch_save_sync_transfer, NULL))
          {
